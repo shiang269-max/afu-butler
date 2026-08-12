@@ -1,0 +1,1 @@
+console.log("LINE第五個家人正在啟動");
