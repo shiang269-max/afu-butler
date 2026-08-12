@@ -13,12 +13,14 @@
  * - LINE 事件判斷
  */
 
+import fs from 'fs';
+import path from 'path';
+
 export type ErrorType =
   | 'rate_limit'
   | 'network'
   | 'api'
   | 'unknown';
-
 
 /*
  * 判斷錯誤類型。
@@ -29,7 +31,6 @@ export function classifyError(
 
   const message =
     getErrorMessage(error).toLowerCase();
-
 
   /*
    * API 限流 / 額度。
@@ -43,7 +44,6 @@ export function classifyError(
   ) {
     return 'rate_limit';
   }
-
 
   /*
    * 網路或暫時性連線問題。
@@ -60,7 +60,6 @@ export function classifyError(
     return 'network';
   }
 
-
   /*
    * 一般 API 錯誤。
    */
@@ -72,10 +71,8 @@ export function classifyError(
     return 'api';
   }
 
-
   return 'unknown';
 }
-
 
 /*
  * 統一取得錯誤文字。
@@ -90,13 +87,11 @@ export function getErrorMessage(
     return error.message;
   }
 
-
   if (
     typeof error === 'string'
   ) {
     return error;
   }
-
 
   try {
     return JSON.stringify(
@@ -107,9 +102,12 @@ export function getErrorMessage(
   }
 }
 
-
 /*
  * 統一記錄錯誤。
+ *
+ * 同時：
+ * 1. 顯示在終端機
+ * 2. 寫入 logs/error.log
  */
 export function logError(
   context: string,
@@ -119,12 +117,68 @@ export function logError(
   const type =
     classifyError(error);
 
+  const errorMessage =
+    getErrorMessage(error);
+
+  const timestamp =
+    new Date().toISOString();
+
+  const logLine =
+    `[${timestamp}] [${type}] ${context}: ${errorMessage}`;
+
+  /*
+   * 保留原本的終端機紀錄。
+   */
   console.error(
-    `[${type}] ${context}:`,
+    logLine,
     error,
   );
-}
 
+  /*
+   * 寫入錯誤日誌。
+   */
+  try {
+
+    const logDirectory =
+      path.join(
+        process.cwd(),
+        'logs',
+      );
+
+    /*
+     * 如果 logs 不存在，自動建立。
+     */
+    fs.mkdirSync(
+      logDirectory,
+      {
+        recursive: true,
+      },
+    );
+
+    const logFile =
+      path.join(
+        logDirectory,
+        'error.log',
+      );
+
+    fs.appendFileSync(
+      logFile,
+      `${logLine}\n`,
+      'utf8',
+    );
+
+  } catch (logWriteError) {
+
+    /*
+     * 如果連錯誤日誌都寫不進去，
+     * 至少把這個問題留在終端機。
+     */
+    console.error(
+      '[unknown] 無法寫入錯誤日誌:',
+      logWriteError,
+    );
+  }
+}
 
 /*
  * 提供給使用者看到的
@@ -141,7 +195,6 @@ export function getFallbackMessage(
   const type =
     classifyError(error);
 
-
   switch (type) {
 
     case 'rate_limit':
@@ -149,18 +202,15 @@ export function getFallbackMessage(
         '啟奏……內務府今日似乎也有點忙。'
       );
 
-
     case 'network':
       return (
         '啟奏……奴才剛才好像被風吹斷線了。'
       );
 
-
     case 'api':
       return (
         '啟奏……內務府出了點小差錯。'
       );
-
 
     case 'unknown':
     default:
