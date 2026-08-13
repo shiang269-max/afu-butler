@@ -98,8 +98,17 @@ app.post(
             const userMessage =
               event.message.text;
 
+
+            /*
+             * 目前說話的人。
+             *
+             * 這是根據 LINE userId 判斷，
+             * 與「這次想找誰」完全不同。
+             */
             const familyMember =
-  FAMILY_MEMBERS[event.source.userId || ''];
+              FAMILY_MEMBERS[
+                event.source.userId || ''
+              ];
 
 
             console.log(
@@ -145,11 +154,11 @@ app.post(
              * 主動呼叫總管的觸發詞。
              */
             const triggerWords = [
-  '大內總管',
-  '總管',
-  '內內',
-  '喳子',
-];
+              '大內總管',
+              '總管',
+              '內內',
+              '喳子',
+            ];
 
 
             const hasTrigger =
@@ -203,10 +212,12 @@ app.post(
                * 啟用 Observer。
                */
               observeMessage(
-  {
-    targetId,
-    userMessage,
-    familyMember,
+                {
+                  targetId,
+
+                  userMessage,
+
+                  familyMember,
 
                   /*
                    * Observer 如果延遲幾秒，
@@ -266,52 +277,136 @@ app.post(
             try {
 
               const cleanedMessage =
-  userMessage
-    .replace(/大內總管/g, '')
-    .replace(/總管/g, '')
-    .replace(/內內/g, '')
-    .replace(/喳子/g, '')
-    .trim();
+                userMessage
+                  .replace(/大內總管/g, '')
+                  .replace(/總管/g, '')
+                  .replace(/內內/g, '')
+                  .replace(/喳子/g, '')
+                  .trim();
 
 
               /*
-               * 如果只是單純叫總管，
-               * 給 Gemini 一個自然提示。
+               * =====================================================
+               * 目前說話者
+               * =====================================================
+               *
+               * familyMember 永遠代表：
+               *
+               * 「這一句話是誰說的？」
+               *
+               * 絕對不是這次要找的人。
                */
-              const familyContext =
-  familyMember
-    ? `
-目前說話的家庭成員：
+              const speakerContext =
+                familyMember
+                  ? `
+【目前說話者】
+
 身份：${familyMember.identity}
 家庭角色：${familyMember.role}
 家庭地位：${familyMember.authority}
 個性：${familyMember.personality}
 互動方式：${familyMember.interaction}
+總管對此人的稱呼：${familyMember.mentionName}
 
-請自然理解這些資訊，不要直接把人物設定當成資料朗讀出來。
+這個人就是目前正在和你說話的人。
+請依照這個人的家庭身份與互動方式回應。
+不要把「目前說話者」與「這次要找的人」混為一談。
 `
-    : `
+                  : `
+【目前說話者】
+
 目前說話者尚未登記在家庭成員資料中。
+不要自行猜測其家庭身份。
 `;
 
-const familyTarget =
-  await resolveFamilyTarget(
-    cleanedMessage,
-    gemini,
-  );
 
-if (familyTarget) {
-  console.log(
-    'Family target:',
-    familyTarget.member.identity,
-    familyTarget.userId,
-  );
-}
-const messageForGemini =
-  `${familyContext}
+              /*
+               * =====================================================
+               * 找出使用者這次想找的家庭成員
+               * =====================================================
+               */
+              const familyTarget =
+                await resolveFamilyTarget(
+                  cleanedMessage,
+                  gemini,
+                );
 
-目前訊息：
-${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
+
+              if (familyTarget) {
+                console.log(
+                  'Family target:',
+                  familyTarget.member.identity,
+                  familyTarget.userId,
+                );
+              }
+
+
+              /*
+               * =====================================================
+               * 目前要找的人
+               * =====================================================
+               *
+               * familyTarget 與 familyMember 是兩個完全不同
+               * 的概念。
+               *
+               * familyMember：
+               * 誰正在說話。
+               *
+               * familyTarget：
+               * 使用者要求總管找誰／聯絡誰。
+               */
+              const targetContext =
+                familyTarget
+                  ? `
+【目前要找／聯絡的家庭成員】
+
+身份：${familyTarget.member.identity}
+總管對此人的稱呼：${familyTarget.member.mentionName}
+LINE User ID：${familyTarget.userId}
+
+這是一位真實存在、已登記的家庭成員。
+程式已經根據家庭資料確認其身份。
+
+請注意：
+這個人不是目前說話者。
+這個人是目前說話者要求你找／聯絡的對象。
+
+不要把這個人的身份套到目前說話者身上。
+不要否認這個人的存在。
+不要說自己沒有實體的這位家庭成員。
+`
+                  : `
+【目前要找／聯絡的家庭成員】
+
+目前沒有解析出特定的家庭成員。
+不要自行猜測目標人物。
+`;
+
+
+              /*
+               * =====================================================
+               * 提供給 Gemini 的完整上下文
+               * =====================================================
+               */
+              const messageForGemini =
+                `${speakerContext}
+
+${targetContext}
+
+【目前訊息】
+
+${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}
+
+【最重要的判斷規則】
+
+1. 目前說話者與目前要找的人是兩個不同概念。
+2. familyMember 是說話者。
+3. familyTarget 是要找／聯絡的人。
+4. 如果兩者不同，絕對不要混淆。
+5. 如果 familyTarget 已經存在，代表程式已經確認這位家庭成員。
+6. 不要自行否認 familyTarget 的存在。
+7. 自然使用家庭身份與稱呼，不要把設定資料直接朗讀出來。
+`;
 
 
               /*
@@ -325,16 +420,23 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
 
 
               /*
-               * 立即呼叫 Gemini。
+               * =====================================================
+               * 立即呼叫 Gemini
+               * =====================================================
+               *
+               * 只有群組才真正執行 LINE Mention。
+               *
+               * 私訊即使解析到了 familyTarget，
+               * 也不會嘗試 Mention。
                */
               const replyText =
-  await replyWithGemini(
-    event.replyToken,
-    prompt,
-    event.source.type === 'group'
-      ? familyTarget
-      : null,
-  );
+                await replyWithGemini(
+                  event.replyToken,
+                  prompt,
+                  event.source.type === 'group'
+                    ? familyTarget
+                    : null,
+                );
 
 
               /*
@@ -354,7 +456,9 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
                 replyText,
               );
 
+
             } catch (error) {
+
 
               /*
                * 記錄完整錯誤。
@@ -387,6 +491,7 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
                   },
                 );
 
+
               } catch (
                 fallbackError
               ) {
@@ -408,7 +513,9 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
 
       res.sendStatus(200);
 
+
     } catch (error) {
+
 
       logError(
         'Webhook error',
@@ -426,6 +533,7 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
  * Gemini 正常主動回覆
  * ========================================================= */
 
+
 async function replyWithGemini(
   replyToken: string,
   prompt: string,
@@ -437,6 +545,7 @@ async function replyWithGemini(
     };
   } | null,
 ): Promise<string> {
+
 
   const response =
     await gemini.models.generateContent(
@@ -460,53 +569,63 @@ async function replyWithGemini(
     '我剛剛好像沒有想好要怎麼回答。';
 
 
+  /*
+   * 群組中有指定目標：
+   * 使用真正的 LINE Mention。
+   */
   if (familyTarget) {
-  await lineClient.replyMessage(
-    {
-      replyToken,
 
-      messages: [
-        {
-          type: 'textV2',
+    await lineClient.replyMessage(
+      {
+        replyToken,
 
-          text:
-            `{target} ${replyText.slice(0, 4950)}`,
+        messages: [
+          {
+            type: 'textV2',
 
-          substitution: {
-            target: {
-              type: 'mention',
+            text:
+              `{target} ${replyText.slice(0, 4950)}`,
 
-              mentionee: {
-                type: 'user',
+            substitution: {
+              target: {
+                type: 'mention',
 
-                userId:
-                  familyTarget.userId,
+                mentionee: {
+                  type: 'user',
+
+                  userId:
+                    familyTarget.userId,
+                },
               },
             },
           },
-        },
-      ],
-    },
-  );
-} else {
-  await lineClient.replyMessage(
-    {
-      replyToken,
+        ],
+      },
+    );
 
-      messages: [
-        {
-          type: 'text',
+  } else {
 
-          text:
-            replyText.slice(
-              0,
-              5000,
-            ),
-        },
-      ],
-    },
-  );
-}
+    /*
+     * 一般文字回覆。
+     */
+    await lineClient.replyMessage(
+      {
+        replyToken,
+
+        messages: [
+          {
+            type: 'text',
+
+            text:
+              replyText.slice(
+                0,
+                5000,
+              ),
+          },
+        ],
+      },
+    );
+  }
 
 
   return replyText;
@@ -519,6 +638,7 @@ async function replyWithGemini(
 
 app.listen(
   PORT,
+
   () => {
 
     console.log(
