@@ -4,6 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import * as dotenv from 'dotenv';
 
 import { SYSTEM_INSTRUCTION } from './persona';
+import { FAMILY_MEMBERS } from './family';
 
 import {
   addToMemory,
@@ -96,6 +97,9 @@ app.post(
             const userMessage =
               event.message.text;
 
+            const familyMember =
+  FAMILY_MEMBERS[event.source.userId || ''];
+
 
             console.log(
               'LINE event source:',
@@ -140,9 +144,11 @@ app.post(
              * 主動呼叫總管的觸發詞。
              */
             const triggerWords = [
-              '大內總管',
-              '總管',
-            ];
+  '大內總管',
+  '總管',
+  '內內',
+  '喳子',
+];
 
 
             const hasTrigger =
@@ -259,25 +265,39 @@ app.post(
             try {
 
               const cleanedMessage =
-                userMessage
-                  .replace(
-                    /大內總管/g,
-                    '',
-                  )
-                  .replace(
-                    /總管/g,
-                    '',
-                  )
-                  .trim();
+  userMessage
+    .replace(/大內總管/g, '')
+    .replace(/總管/g, '')
+    .replace(/內內/g, '')
+    .replace(/喳子/g, '')
+    .trim();
 
 
               /*
                * 如果只是單純叫總管，
                * 給 Gemini 一個自然提示。
                */
-              const messageForGemini =
-                cleanedMessage ||
-                '有人在聊天中叫你，請自然地回應。';
+              const familyContext =
+  familyMember
+    ? `
+目前說話的家庭成員：
+身份：${familyMember.identity}
+家庭角色：${familyMember.role}
+家庭地位：${familyMember.authority}
+個性：${familyMember.personality}
+互動方式：${familyMember.interaction}
+
+請自然理解這些資訊，不要直接把人物設定當成資料朗讀出來。
+`
+    : `
+目前說話者尚未登記在家庭成員資料中。
+`;
+
+const messageForGemini =
+  `${familyContext}
+
+目前訊息：
+${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
 
 
               /*
