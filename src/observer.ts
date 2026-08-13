@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { messagingApi } from '@line/bot-sdk';
+import { FamilyMember } from './family';
 
 type ObserverCategory =
   | 'greeting'
@@ -36,6 +37,7 @@ interface ObserverState {
 interface ObserveOptions {
   targetId: string;
   userMessage: string;
+  familyMember?: FamilyMember;
   getConversationContext: () => string;
   gemini: GoogleGenAI;
   lineClient: messagingApi.MessagingApiClient;
@@ -587,14 +589,16 @@ async function generateAndPushPassiveReply(
 ): Promise<void> {
 
   const {
-    targetId,
-    getConversationContext,
-    gemini,
-    lineClient,
-    onPassiveReply,
-    mode,
-    fallback,
-  } = options;
+  targetId,
+  userMessage,
+  familyMember,
+  getConversationContext,
+  gemini,
+  lineClient,
+  onPassiveReply,
+  mode,
+  fallback,
+} = options;
 
 
   try {
@@ -616,9 +620,21 @@ async function generateAndPushPassiveReply(
             'gemini-3.5-flash-lite',
 
           contents:
-            `${observerInstruction}\n\n` +
-            `【目前對話】\n` +
-            context,
+  `${observerInstruction}\n\n` +
+  `【目前這句話的說話者】\n` +
+  (
+    familyMember
+      ? `身份：${familyMember.identity}\n` +
+        `家庭角色：${familyMember.role}\n` +
+        `家庭地位：${familyMember.authority}\n` +
+        `個性：${familyMember.personality}\n` +
+        `互動方式：${familyMember.interaction}\n`
+      : `目前尚未登記此說話者的家庭身份。\n`
+  ) +
+  `\n【這次收到的訊息】\n` +
+  userMessage +
+  `\n\n【目前對話】\n` +
+  context,
 
           config: {
 

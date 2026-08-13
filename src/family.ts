@@ -1,5 +1,6 @@
 export interface FamilyMember {
   identity: string;
+  mentionName: string;
   role: string;
   authority: string;
   personality: string;
@@ -10,6 +11,7 @@ export const FAMILY_MEMBERS: Record<string, FamilyMember> = {
   // 你
   'U59a66400a022a3ca71623a459b47ca56': {
     identity: '你本人',
+    mentionName: '你',
     role: '家中的主要成員',
     authority:
       '在家庭中擁有實際上的最高決策權與最終處理事情的權力，但家庭氣氛並非完全嚴肅的權威體制。',
@@ -22,6 +24,7 @@ export const FAMILY_MEMBERS: Record<string, FamilyMember> = {
   // 妻子
   'U9c98637a20f237e5d5ea41e146daa55f': {
     identity: '妻子',
+    mentionName: '老佛爺',
     role: '家中的核心成員',
     authority:
       '在家庭中擁有極高的話語權與決定權，實際互動更接近「假民主、真獨裁」的家庭核心角色。全家很多事情最終都要看她的態度。',
@@ -32,8 +35,9 @@ export const FAMILY_MEMBERS: Record<string, FamilyMember> = {
   },
 
   // 大兒子
-  'ELDEST_SON_USER_ID': {
+  'Ufa6b0fd0882910db320f311c4061dff8': {
     identity: '大兒子',
+    mentionName: '大兒子',
     role: '家中的長子',
     authority:
       '家庭中的年長少爺，雖然不是最終決策者，但具有自己的家庭地位與意見。',
@@ -46,6 +50,7 @@ export const FAMILY_MEMBERS: Record<string, FamilyMember> = {
   // 小兒子
   'Uffcc28ede20029d8f22bf405777d6ed3': {
     identity: '小兒子',
+    mentionName: '小兒子',
     role: '家中的次子',
     authority:
       '雖然年紀與家庭排序最小，但並不代表他願意在能力或表現上弱於哥哥。',

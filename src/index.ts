@@ -5,6 +5,7 @@ import * as dotenv from 'dotenv';
 
 import { SYSTEM_INSTRUCTION } from './persona';
 import { FAMILY_MEMBERS } from './family';
+import { resolveFamilyTarget } from './family-resolver';
 
 import {
   addToMemory,
@@ -202,10 +203,10 @@ app.post(
                * 啟用 Observer。
                */
               observeMessage(
-                {
-                  targetId,
-
-                  userMessage,
+  {
+    targetId,
+    userMessage,
+    familyMember,
 
                   /*
                    * Observer 如果延遲幾秒，
@@ -293,6 +294,19 @@ app.post(
 目前說話者尚未登記在家庭成員資料中。
 `;
 
+const familyTarget =
+  await resolveFamilyTarget(
+    cleanedMessage,
+    gemini,
+  );
+
+if (familyTarget) {
+  console.log(
+    'Family target:',
+    familyTarget.member.identity,
+    familyTarget.userId,
+  );
+}
 const messageForGemini =
   `${familyContext}
 
@@ -314,10 +328,13 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
                * 立即呼叫 Gemini。
                */
               const replyText =
-                await replyWithGemini(
-                  event.replyToken,
-                  prompt,
-                );
+  await replyWithGemini(
+    event.replyToken,
+    prompt,
+    event.source.type === 'group'
+      ? familyTarget
+      : null,
+  );
 
 
               /*
@@ -412,6 +429,13 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}`;
 async function replyWithGemini(
   replyToken: string,
   prompt: string,
+  familyTarget?: {
+    userId: string;
+    member: {
+      identity: string;
+      mentionName: string;
+    };
+  } | null,
 ): Promise<string> {
 
   const response =
@@ -436,6 +460,35 @@ async function replyWithGemini(
     '我剛剛好像沒有想好要怎麼回答。';
 
 
+  if (familyTarget) {
+  await lineClient.replyMessage(
+    {
+      replyToken,
+
+      messages: [
+        {
+          type: 'textV2',
+
+          text:
+            `{target} ${replyText.slice(0, 4950)}`,
+
+          substitution: {
+            target: {
+              type: 'mention',
+
+              mentionee: {
+                type: 'user',
+
+                userId:
+                  familyTarget.userId,
+              },
+            },
+          },
+        },
+      ],
+    },
+  );
+} else {
   await lineClient.replyMessage(
     {
       replyToken,
@@ -453,6 +506,7 @@ async function replyWithGemini(
       ],
     },
   );
+}
 
 
   return replyText;
