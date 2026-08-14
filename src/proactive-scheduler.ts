@@ -3,178 +3,209 @@ import { messagingApi } from '@line/bot-sdk';
 
 /*
  * =========================================================
- * 主動訊息設定
+ * 總管主動訊息排程器
  * =========================================================
  *
- * 台灣時間
+ * 固定作息：
+ *
+ * 06:00 → 早安
+ * 22:30 → 晚安
+ *
+ * 冷場：
+ *
+ * 連續 6 小時沒有人說話
+ * → 主動打破冷清
+ *
+ * 每日最多：
+ *
+ * 2 次冷場主動訊息
+ *
+ * 夜間：
+ *
+ * 23:00～06:00
+ * → 禁止「冷場主動訊息」
+ *
+ * 注意：
+ *
+ * 夜間禁用只限制冷場主動。
+ * 不影響正常對話、正常回覆、被叫、被問問題。
  */
+
+
+/*
+ * =========================================================
+ * 台灣時區
+ * =========================================================
+ */
+
 const TIME_ZONE = 'Asia/Taipei';
 
 
 /*
- * 每天固定晚安時間
+ * =========================================================
+ * 固定晚安時間
+ * =========================================================
  */
+
 const GOOD_NIGHT_HOUR = 22;
 const GOOD_NIGHT_MINUTE = 30;
 
 
 /*
- * 冷場超過幾小時後，
- * 總管可以主動打破冷清。
+ * =========================================================
+ * 固定早安時間
+ * =========================================================
  */
-const SILENCE_HOURS = 3;
+
+const GOOD_MORNING_HOUR = 6;
+const GOOD_MORNING_MINUTE = 0;
 
 
 /*
- * 每天最多因為「冷場」主動說幾次。
+ * =========================================================
+ * 冷場時間
+ * =========================================================
  *
- * 注意：
- * 固定時間的晚安不計入這個次數。
+ * 連續 6 小時沒有人說話，
+ * 才可以觸發冷場主動訊息。
  */
+
+const SILENCE_HOURS = 6;
+
+
+/*
+ * =========================================================
+ * 冷場夜間禁用時段
+ * =========================================================
+ *
+ * 23:00～06:00
+ *
+ * 只限制「冷場主動」。
+ */
+
+const SILENCE_QUIET_START_HOUR = 23;
+const SILENCE_QUIET_END_HOUR = 6;
+
+
+/*
+ * =========================================================
+ * 每日冷場主動次數上限
+ * =========================================================
+ *
+ * 22:30 晚安不計入。
+ * 06:00 早安不計入。
+ */
+
 const MAX_SILENCE_REPLIES_PER_DAY = 2;
 
 
 /*
  * =========================================================
- * 家庭群組狀態
+ * 排程檢查頻率
  * =========================================================
- */
-
-let familyGroupId: string | null = null;
-
-
-/*
- * 最後一次收到家庭群組訊息的時間。
- */
-let lastGroupMessageTime = 0;
-
-
-/*
- * 今天已經因冷場主動說話幾次。
- */
-let silenceRepliesToday = 0;
-
-
-/*
- * 用來判斷冷場次數是哪一天。
- */
-let silenceCounterDate = '';
-
-
-/*
- * 今天的固定晚安是否已經執行。
  *
- * 避免程式因為檢查頻率而在 22:30 附近重複發送。
+ * 每 30 秒檢查一次。
+ *
+ * 注意：
+ *
+ * 30 秒只是檢查頻率，
+ * 並不是 30 秒沒人說話就觸發。
  */
-let goodNightSentDate = '';
+
+const CHECK_INTERVAL_MS = 30 * 1000;
 
 
 /*
  * =========================================================
- * 晚安訊息
+ * 群組狀態
  * =========================================================
  */
 
-const GOOD_NIGHT_MESSAGE =
-  '諸位，夜深了，奴才先向各位道一聲晚安。若還有什麼吩咐，隨時喚奴才一聲便是。';
-
-
-/*
- * =========================================================
- * 啟動主動排程器
- * =========================================================
- */
-
-export function startProactiveScheduler(
-  lineClient: messagingApi.MessagingApiClient,
-  generateReply: (
-    type: 'good-night' | 'silence',
-  ) => Promise<string>,
-): void {
+interface GroupState {
+  /*
+   * 最後一次家人在群組說話的時間
+   */
+  lastHumanMessageAt: number | null;
 
   /*
-   * 每 30 秒檢查一次。
-   *
-   * 這不是每 30 秒發訊息。
-   * 只是讓排程器確認：
-   *
-   * 1. 現在是否到了 22:30
-   * 2. 是否已經冷場超過 3 小時
+   * 今天是否已經發過晚安
    */
-  setInterval(
-    async () => {
+  lastGoodNightDate: string | null;
 
-      try {
+  /*
+   * 今天是否已經發過早安
+   */
+  lastGoodMorningDate: string | null;
 
-        await checkProactiveMessages(
-          lineClient,
-          generateReply,
-        );
+  /*
+   * 冷場次數屬於哪一天
+   */
+  silenceRepliesDate: string | null;
 
-      } catch (error) {
-
-        console.error(
-          '[Proactive Scheduler] Error:',
-          error,
-        );
-      }
-
-    },
-    30 * 1000,
-  );
-
-
-  console.log(
-    '[Proactive Scheduler] 已啟動',
-  );
-
-  console.log(
-    `[Proactive Scheduler] 固定晚安：每天 ${String(GOOD_NIGHT_HOUR).padStart(2, '0')}:${String(GOOD_NIGHT_MINUTE).padStart(2, '0')}`,
-  );
-
-  console.log(
-    `[Proactive Scheduler] 冷場時間：${SILENCE_HOURS} 小時`,
-  );
-
-  console.log(
-    `[Proactive Scheduler] 每日冷場上限：${MAX_SILENCE_REPLIES_PER_DAY} 次`,
-  );
+  /*
+   * 今天已經主動打破冷場幾次
+   */
+  silenceRepliesCount: number;
 }
 
 
 /*
  * =========================================================
- * 記錄家庭群組訊息
+ * 所有群組狀態
  * =========================================================
- *
- * index.ts 每收到一次家庭群組訊息，
- * 就呼叫這個函式。
  */
-export function recordFamilyGroupMessage(
+
+const groupStates =
+  new Map<string, GroupState>();
+
+
+/*
+ * =========================================================
+ * 取得群組狀態
+ * =========================================================
+ */
+
+function getGroupState(
   groupId: string,
-): void {
+): GroupState {
 
-  familyGroupId = groupId;
-
-  lastGroupMessageTime =
-    Date.now();
-
-  resetDailyCounterIfNeeded();
+  let state =
+    groupStates.get(groupId);
 
 
-  console.log(
-    '[Proactive Scheduler] 家庭群組收到訊息',
-  );
+  if (!state) {
+
+    state = {
+      lastHumanMessageAt: null,
+
+      lastGoodNightDate: null,
+
+      lastGoodMorningDate: null,
+
+      silenceRepliesDate: null,
+
+      silenceRepliesCount: 0,
+    };
+
+
+    groupStates.set(
+      groupId,
+      state,
+    );
+  }
+
+
+  return state;
 }
 
 
 /*
  * =========================================================
- * 取得目前台灣時間
+ * 取得台灣現在時間
  * =========================================================
  */
 
-function getTaipeiDateTime(): {
+function getTaipeiNow(): {
   date: string;
   hour: number;
   minute: number;
@@ -184,246 +215,113 @@ function getTaipeiDateTime(): {
     new Date();
 
 
-  const parts =
+  const formatter =
     new Intl.DateTimeFormat(
-      'en-US',
+      'en-CA',
       {
         timeZone: TIME_ZONE,
+
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
+
         hour: '2-digit',
         minute: '2-digit',
+
         hour12: false,
       },
-    ).formatToParts(now);
+    );
 
 
-  const getPart =
-    (type: string): string =>
-      parts.find(
-        (part) =>
-          part.type === type,
-      )?.value || '';
+  const parts =
+    formatter.formatToParts(now);
+
+
+  const values:
+    Record<string, string> = {};
+
+
+  for (const part of parts) {
+
+    if (part.type !== 'literal') {
+
+      values[part.type] =
+        part.value;
+    }
+  }
 
 
   return {
     date:
-      `${getPart('year')}-${getPart('month')}-${getPart('day')}`,
+      `${values.year}-${values.month}-${values.day}`,
 
     hour:
-      Number(
-        getPart('hour'),
-      ),
+      Number(values.hour),
 
     minute:
-      Number(
-        getPart('minute'),
-      ),
+      Number(values.minute),
   };
 }
 
 
 /*
  * =========================================================
- * 每日計數器重置
+ * 判斷是否處於冷場夜間禁用時間
  * =========================================================
+ *
+ * 23:00～05:59
+ * → true
+ *
+ * 06:00 起
+ * → false
  */
 
-function resetDailyCounterIfNeeded(): void {
+function isSilenceQuietHours(
+  hour: number,
+): boolean {
 
-  const now =
-    getTaipeiDateTime();
-
-
-  if (
-    silenceCounterDate !==
-    now.date
-  ) {
-
-    silenceCounterDate =
-      now.date;
-
-    silenceRepliesToday =
-      0;
-
-    goodNightSentDate =
-      '';
-  }
+  return (
+    hour >= SILENCE_QUIET_START_HOUR ||
+    hour < SILENCE_QUIET_END_HOUR
+  );
 }
 
 
 /*
  * =========================================================
- * 主動訊息檢查
+ * 記錄群組有人說話
  * =========================================================
+ *
+ * index.ts 收到群組訊息時呼叫。
+ *
+ * 私訊不要呼叫。
  */
 
-async function checkProactiveMessages(
-  lineClient: messagingApi.MessagingApiClient,
-  generateReply: (
-    type: 'good-night' | 'silence',
-  ) => Promise<string>,
-): Promise<void> {
+export function recordFamilyGroupMessage(
+  groupId: string,
+): void {
 
-  /*
-   * 沒有家庭群組時，
-   * 暫時什麼都不做。
-   */
-  if (!familyGroupId) {
-    return;
-  }
+  const state =
+    getGroupState(groupId);
 
 
-  resetDailyCounterIfNeeded();
-
-
-  const now =
-    getTaipeiDateTime();
-
-
-  /*
-   * =======================================================
-   * ① 固定時間晚安
-   * =======================================================
-   */
-
-  if (
-    now.hour === GOOD_NIGHT_HOUR &&
-    now.minute === GOOD_NIGHT_MINUTE &&
-    goodNightSentDate !== now.date
-  ) {
-
-    const replyText =
-      await generateReply(
-        'good-night',
-      );
-
-
-    const message =
-      replyText.trim() ||
-      GOOD_NIGHT_MESSAGE;
-
-
-    await sendProactiveMessage(
-      lineClient,
-      familyGroupId,
-      message,
-    );
-
-
-    goodNightSentDate =
-      now.date;
-
-
-    console.log(
-      '[Proactive Scheduler] 已發送固定晚安',
-    );
-  }
-
-
-  /*
-   * =======================================================
-   * ② 冷場
-   * =======================================================
-   */
-
-  if (
-    lastGroupMessageTime === 0
-  ) {
-    return;
-  }
-
-
-  /*
-   * 距離最後一次群組訊息多久。
-   */
-  const silenceDuration =
-    Date.now() -
-    lastGroupMessageTime;
-
-
-  const silenceLimit =
-    SILENCE_HOURS *
-    60 *
-    60 *
-    1000;
-
-
-  /*
-   * 尚未冷場到指定時間。
-   */
-  if (
-    silenceDuration <
-    silenceLimit
-  ) {
-    return;
-  }
-
-
-  /*
-   * 今日冷場主動次數已達上限。
-   */
-  if (
-    silenceRepliesToday >=
-    MAX_SILENCE_REPLIES_PER_DAY
-  ) {
-    return;
-  }
-
-
-  /*
-   * 避免同一次冷場在每 30 秒檢查時
-   * 一直觸發。
-   *
-   * 先把 lastGroupMessageTime 更新成現在，
-   * 代表這次冷場已經處理過。
-   */
-  lastGroupMessageTime =
+  state.lastHumanMessageAt =
     Date.now();
-
-
-  const replyText =
-    await generateReply(
-      'silence',
-    );
-
-
-  const message =
-    replyText.trim();
-
-
-  if (!message) {
-    return;
-  }
-
-
-  await sendProactiveMessage(
-    lineClient,
-    familyGroupId,
-    message,
-  );
-
-
-  silenceRepliesToday +=
-    1;
-
-
-  console.log(
-    `[Proactive Scheduler] 冷場主動發話：今日第 ${silenceRepliesToday} 次`,
-  );
 }
 
 
 /*
  * =========================================================
- * 主動推送 LINE 訊息
+ * 發送主動訊息
  * =========================================================
  */
 
 async function sendProactiveMessage(
-  lineClient: messagingApi.MessagingApiClient,
+  lineClient:
+    messagingApi.MessagingApiClient,
+
   groupId: string,
+
   text: string,
 ): Promise<void> {
 
@@ -436,12 +334,585 @@ async function sendProactiveMessage(
           type: 'text',
 
           text:
-            text.slice(
-              0,
-              5000,
-            ),
+            text.slice(0, 5000),
         },
       ],
     },
+  );
+}
+
+
+/*
+ * =========================================================
+ * 固定晚安內容
+ * =========================================================
+ */
+
+function getGoodNightMessage(): string {
+
+  return (
+    '諸位，夜深了，奴才先向各位道一聲晚安。' +
+    '若還有什麼吩咐，隨時喚奴才一聲便是。'
+  );
+}
+
+
+/*
+ * =========================================================
+ * 固定早安內容
+ * =========================================================
+ */
+
+function getGoodMorningMessage(): string {
+
+  return (
+    '諸位，早安。新的一日已開始，' +
+    '奴才也在門口候著，諸位若有吩咐，隨時喚奴才便是。'
+  );
+}
+
+
+/*
+ * =========================================================
+ * 判斷是否正好到達指定時間
+ * =========================================================
+ */
+
+function isExactMinute(
+  hour: number,
+  minute: number,
+
+  targetHour: number,
+  targetMinute: number,
+): boolean {
+
+  return (
+    hour === targetHour &&
+    minute === targetMinute
+  );
+}
+
+
+/*
+ * =========================================================
+ * 每日冷場次數重置
+ * =========================================================
+ */
+
+function resetDailySilenceCountIfNeeded(
+  state: GroupState,
+
+  date: string,
+): void {
+
+  if (
+    state.silenceRepliesDate !== date
+  ) {
+
+    state.silenceRepliesDate =
+      date;
+
+    state.silenceRepliesCount =
+      0;
+  }
+}
+
+
+/*
+ * =========================================================
+ * 22:30 固定晚安
+ * =========================================================
+ */
+
+async function handleGoodNight(
+  lineClient:
+    messagingApi.MessagingApiClient,
+
+  groupId: string,
+
+  state: GroupState,
+
+  date: string,
+
+  hour: number,
+
+  minute: number,
+): Promise<void> {
+
+  if (
+    !isExactMinute(
+      hour,
+      minute,
+
+      GOOD_NIGHT_HOUR,
+      GOOD_NIGHT_MINUTE,
+    )
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * 同一天只發一次。
+   */
+
+  if (
+    state.lastGoodNightDate === date
+  ) {
+
+    return;
+  }
+
+
+  await sendProactiveMessage(
+    lineClient,
+
+    groupId,
+
+    getGoodNightMessage(),
+  );
+
+
+  state.lastGoodNightDate =
+    date;
+}
+
+
+/*
+ * =========================================================
+ * 06:00 固定早安
+ * =========================================================
+ */
+
+async function handleGoodMorning(
+  lineClient:
+    messagingApi.MessagingApiClient,
+
+  groupId: string,
+
+  state: GroupState,
+
+  date: string,
+
+  hour: number,
+
+  minute: number,
+): Promise<void> {
+
+  if (
+    !isExactMinute(
+      hour,
+      minute,
+
+      GOOD_MORNING_HOUR,
+      GOOD_MORNING_MINUTE,
+    )
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * 同一天只發一次。
+   */
+
+  if (
+    state.lastGoodMorningDate === date
+  ) {
+
+    return;
+  }
+
+
+  await sendProactiveMessage(
+    lineClient,
+
+    groupId,
+
+    getGoodMorningMessage(),
+  );
+
+
+  state.lastGoodMorningDate =
+    date;
+
+
+  /*
+   * 06:00 早安本身就是一次主動開場。
+   *
+   * 所以把冷場基準重設為現在。
+   *
+   * 避免：
+   *
+   * 06:00 早安
+   * ↓
+   * 下一輪檢查
+   * ↓
+   * 又判定已經 6 小時沒人說話
+   */
+
+  state.lastHumanMessageAt =
+    Date.now();
+}
+
+
+/*
+ * =========================================================
+ * 冷場主動訊息
+ * =========================================================
+ */
+
+async function handleSilence(
+  lineClient:
+    messagingApi.MessagingApiClient,
+
+  groupId: string,
+
+  state: GroupState,
+
+  generateProactiveReply:
+    (
+      type: 'good-night' | 'silence',
+    ) => Promise<string>,
+
+  date: string,
+
+  hour: number,
+): Promise<void> {
+
+  /*
+   * =======================================================
+   * 夜間禁用
+   * =======================================================
+   *
+   * 這裡只限制冷場主動。
+   *
+   * 正常對話完全不經過這個判斷。
+   */
+
+  if (
+    isSilenceQuietHours(hour)
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * 沒有任何群組活動紀錄，
+   * 就沒有冷場基準。
+   */
+
+  if (
+    state.lastHumanMessageAt === null
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * 每日最多 2 次。
+   */
+
+  resetDailySilenceCountIfNeeded(
+    state,
+    date,
+  );
+
+
+  if (
+    state.silenceRepliesCount >=
+    MAX_SILENCE_REPLIES_PER_DAY
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * 計算距離最後一次家人說話
+   * 已經經過多久。
+   */
+
+  const silenceDurationMs =
+    Date.now() -
+    state.lastHumanMessageAt;
+
+
+  const silenceThresholdMs =
+    SILENCE_HOURS *
+    60 *
+    60 *
+    1000;
+
+
+  if (
+    silenceDurationMs <
+    silenceThresholdMs
+  ) {
+
+    return;
+  }
+
+
+  /*
+   * 交給 index.ts 的 Gemini 主動回覆產生器。
+   *
+   * 這裡只會傳：
+   *
+   * 'silence'
+   */
+
+  const reply =
+    await generateProactiveReply(
+      'silence',
+    );
+
+
+  if (
+    !reply ||
+    !reply.trim()
+  ) {
+
+    return;
+  }
+
+
+  await sendProactiveMessage(
+    lineClient,
+
+    groupId,
+
+    reply.trim(),
+  );
+
+
+  /*
+   * 增加今日冷場主動次數。
+   */
+
+  state.silenceRepliesCount += 1;
+
+
+  /*
+   * 總管剛剛已經主動說話。
+   *
+   * 因此重新計算 6 小時。
+   */
+
+  state.lastHumanMessageAt =
+    Date.now();
+}
+
+
+/*
+ * =========================================================
+ * 檢查單一群組
+ * =========================================================
+ */
+
+async function checkGroup(
+  lineClient:
+    messagingApi.MessagingApiClient,
+
+  groupId: string,
+
+  generateProactiveReply:
+    (
+      type: 'good-night' | 'silence',
+    ) => Promise<string>,
+): Promise<void> {
+
+  const now =
+    getTaipeiNow();
+
+
+  const state =
+    getGroupState(groupId);
+
+
+  /*
+   * 每天重新計算冷場次數。
+   */
+
+  resetDailySilenceCountIfNeeded(
+    state,
+
+    now.date,
+  );
+
+
+  /*
+   * =======================================================
+   * ① 22:30 晚安
+   * =======================================================
+   */
+
+  await handleGoodNight(
+    lineClient,
+
+    groupId,
+
+    state,
+
+    now.date,
+
+    now.hour,
+
+    now.minute,
+  );
+
+
+  /*
+   * =======================================================
+   * ② 06:00 早安
+   * =======================================================
+   */
+
+  await handleGoodMorning(
+    lineClient,
+
+    groupId,
+
+    state,
+
+    now.date,
+
+    now.hour,
+
+    now.minute,
+  );
+
+
+  /*
+   * =======================================================
+   * ③ 冷場主動
+   * =======================================================
+   *
+   * 只有這裡受到 23:00～06:00 限制。
+   */
+
+  await handleSilence(
+    lineClient,
+
+    groupId,
+
+    state,
+
+    generateProactiveReply,
+
+    now.date,
+
+    now.hour,
+  );
+}
+
+
+/*
+ * =========================================================
+ * 啟動總管主動排程器
+ * =========================================================
+ */
+
+export function startProactiveScheduler(
+  lineClient:
+    messagingApi.MessagingApiClient,
+
+  generateProactiveReply:
+    (
+      type: 'good-night' | 'silence',
+    ) => Promise<string>,
+): void {
+
+  console.log(
+    '總管主動訊息排程器已啟動',
+  );
+
+
+  console.log(
+    '固定早安：06:00',
+  );
+
+
+  console.log(
+    '固定晚安：22:30',
+  );
+
+
+  console.log(
+    `冷場門檻：${SILENCE_HOURS} 小時`,
+  );
+
+
+  console.log(
+    `冷場每日上限：${MAX_SILENCE_REPLIES_PER_DAY} 次`,
+  );
+
+
+  console.log(
+    '冷場夜間禁用：23:00～06:00',
+  );
+
+
+  /*
+   * 檢查所有已知家庭群組。
+   */
+
+  const checkAllGroups =
+    async (): Promise<void> => {
+
+      for (
+        const groupId
+        of groupStates.keys()
+      ) {
+
+        try {
+
+          await checkGroup(
+            lineClient,
+
+            groupId,
+
+            generateProactiveReply,
+          );
+
+        } catch (error) {
+
+          console.error(
+            '總管主動訊息失敗:',
+            groupId,
+
+            error,
+          );
+        }
+      }
+    };
+
+
+  /*
+   * 啟動時先檢查一次。
+   */
+
+  void checkAllGroups();
+
+
+  /*
+   * 每 30 秒檢查一次。
+   *
+   * 30 秒只是檢查頻率，
+   * 不是冷場時間。
+   */
+
+  setInterval(
+    () => {
+
+      void checkAllGroups();
+
+    },
+
+    CHECK_INTERVAL_MS,
   );
 }
