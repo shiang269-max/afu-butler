@@ -6,6 +6,7 @@ import * as dotenv from 'dotenv';
 import { SYSTEM_INSTRUCTION } from './persona';
 import { FAMILY_MEMBERS } from './family';
 import { resolveFamilyTarget } from './family-resolver';
+
 import {
   startProactiveScheduler,
   recordFamilyGroupMessage,
@@ -23,15 +24,31 @@ import {
 } from './observer';
 
 import {
+  runAiCore,
+} from './ai/ai-core';
+
+import {
+  buildAiContext,
+  normalizeConversationMessages,
+} from './ai/ai-context';
+
+import {
   getFallbackMessage,
   logError,
 } from './error-handler';
 
 
+/**
+ * =========================================================
+ * 環境設定
+ * =========================================================
+ */
+
 dotenv.config();
 
 
-const app = express();
+const app =
+  express();
 
 
 const PORT =
@@ -68,7 +85,7 @@ const gemini =
   });
 
 
-/*
+/**
  * =========================================================
  * 家庭目標意圖判斷
  * =========================================================
@@ -76,18 +93,17 @@ const gemini =
  * 私訊與群組共用同一套目標辨識邏輯。
  *
  * 但不能看到「大家」兩個字就直接當成 @ALL，
- * 否則一般聊天例如「大家今天吃飯了嗎」也會被誤判。
+ * 否則一般聊天例如：
  *
- * 因此只有在以下情況才進入 family-resolver：
+ * 「大家今天吃飯了嗎」
  *
- * 1. 明確的叫人／聯絡／提醒等動作
- * 2. 早安、晚安等直接對全體說話的情境
- * 3. 訊息本身就是「大家／全家人／所有人」等稱呼
- * 4. 明確提到已登記家庭成員，且符合上述情境
+ * 也可能被誤判。
  *
- * 這讓「大家晚安」可以在私訊安全測試，
- * 同時避免普通聊天被誤判成 @ALL。
+ * 因此只有在明確情境下，
+ * 才進入 family-resolver。
+ * =========================================================
  */
+
 
 const ALL_TARGET_WORDS = [
   '所有人',
@@ -158,8 +174,10 @@ function hasFamilyTargetIntent(
 
 
   /*
-   * 「大家晚安」／「全家人早安」
+   * 「大家晚安」
+   * 「全家人早安」
    */
+
   if (
     hasAllTarget &&
     hasGreeting
@@ -169,8 +187,10 @@ function hasFamilyTargetIntent(
 
 
   /*
-   * 「幫我叫大家」／「通知所有人」
+   * 「幫我叫大家」
+   * 「通知所有人」
    */
+
   if (
     hasAllTarget &&
     hasAction
@@ -180,9 +200,11 @@ function hasFamilyTargetIntent(
 
 
   /*
-   * 「大家」／「全家人」單獨出現，
-   * 視為直接呼叫這個目標。
+   * 「大家」
+   * 「全家人」
+   * 「所有人」
    */
+
   if (
     ALL_TARGET_WORDS.some(
       (word) =>
@@ -195,11 +217,14 @@ function hasFamilyTargetIntent(
 
   /*
    * 已登記家庭成員的直接稱呼。
+   *
    * 例如：
+   *
    * 「小兒子晚安」
    * 「叫小兒子」
    * 「小兒子」
    */
+
   const hasKnownFamilyMember =
     Object.values(
       FAMILY_MEMBERS,
@@ -211,10 +236,12 @@ function hasFamilyTargetIntent(
             ? member.identity
             : '';
 
+
         const mentionName =
           typeof member?.mentionName === 'string'
             ? member.mentionName
             : '';
+
 
         return (
           (identity && text.includes(identity)) ||
@@ -236,12 +263,199 @@ function hasFamilyTargetIntent(
 }
 
 
-app.get('/', (req, res) => {
-  res.send(
-    'LINE第五個家人正在運作',
-  );
-});
+/**
+ * =========================================================
+ * 清除總管呼叫詞
+ * =========================================================
+ */
 
+function cleanTriggerWords(
+  message: string,
+): string {
+
+  return message
+    .replace(/大內總管/g, '')
+    .replace(/總管/g, '')
+    .replace(/內內/g, '')
+    .replace(/喳子/g, '')
+    .trim();
+}
+
+
+/**
+ * =========================================================
+ * 家庭成員轉換
+ * =========================================================
+ */
+
+function buildFamilyMemberContexts() {
+
+  return Object.values(
+    FAMILY_MEMBERS,
+  ).map(
+    (member: any) => {
+
+      return {
+        userId:
+          member.userId ?? '',
+
+        identity:
+          member.identity ?? '',
+
+        role:
+          member.role,
+
+        authority:
+          member.authority,
+
+        personality:
+          member.personality,
+
+        interaction:
+          member.interaction,
+
+        mentionName:
+          member.mentionName,
+      };
+    },
+  );
+}
+
+
+/**
+ * =========================================================
+ * 建立 AI Context
+ * =========================================================
+ *
+ * 重要：
+ *
+ * Memory 的實際資料結構目前使用：
+ *
+ * {
+ *   role: 'user' | 'assistant',
+ *   text: '...'
+ * }
+ *
+ * 不在 index.ts 自己重新猜測 Memory 欄位。
+ *
+ * 直接交給 ai-context.ts：
+ *
+ * normalizeConversationMessages()
+ *
+ * 它目前已經能處理：
+ *
+ * - content
+ * - text
+ * - message
+ *
+ * 因此 Memory 與 AI Context 的格式轉換
+ * 集中由 ai-context.ts 負責。
+ *
+ * 這次修正的核心就在這裡。
+ * =========================================================
+ */
+
+function createAiContext(
+  event: any,
+  familyMember: any,
+  historyBeforeMessage: any[],
+  currentMessage: string,
+) {
+
+  const conversationType =
+    event.source.type === 'group'
+      ? 'group' as const
+      : 'private' as const;
+
+
+  /*
+   * =======================================================
+   * Memory → AI Conversation Messages
+   * =======================================================
+   *
+   * 不再直接讀 message.content。
+   *
+   * 由 normalizeConversationMessages()
+   * 正確處理目前 Memory 的 text 欄位。
+   * =======================================================
+   */
+
+  const recentMessages =
+    normalizeConversationMessages(
+      historyBeforeMessage,
+    );
+
+
+  return buildAiContext({
+
+    conversationType,
+
+    groupId:
+      event.source.type === 'group'
+        ? event.source.groupId
+        : undefined,
+
+    speakerUserId:
+      event.source.userId,
+
+    speaker:
+      familyMember
+        ? {
+            userId:
+              event.source.userId || '',
+
+            identity:
+              familyMember.identity,
+
+            role:
+              familyMember.role,
+
+            authority:
+              familyMember.authority,
+
+            personality:
+              familyMember.personality,
+
+            interaction:
+              familyMember.interaction,
+
+            mentionName:
+              familyMember.mentionName,
+          }
+        : undefined,
+
+    familyMembers:
+      buildFamilyMemberContexts(),
+
+    recentMessages,
+
+    currentMessage,
+  });
+}
+
+
+/**
+ * =========================================================
+ * LINE 基本頁面
+ * =========================================================
+ */
+
+app.get(
+  '/',
+  (req, res) => {
+
+    res.send(
+      'LINE第五個家人正在運作',
+    );
+  },
+);
+
+
+/**
+ * =========================================================
+ * LINE Webhook
+ * =========================================================
+ */
 
 app.post(
   '/webhook',
@@ -255,8 +469,15 @@ app.post(
     try {
 
       await Promise.all(
+
         events.map(
           async (event: any) => {
+
+            /*
+             * =====================================================
+             * 只處理文字訊息
+             * =====================================================
+             */
 
             if (
               event.type !== 'message' ||
@@ -276,6 +497,7 @@ app.post(
              * 目前說話的人
              * =====================================================
              */
+
             const familyMember =
               FAMILY_MEMBERS[
                 event.source.userId || ''
@@ -293,27 +515,38 @@ app.post(
 
 
             /*
-             * 目前只處理私訊與群組。
+             * =====================================================
+             * 目前只處理：
+             *
+             * - 私訊
+             * - 群組
+             * =====================================================
              */
+
             if (
-  event.source.type !== 'user' &&
-  event.source.type !== 'group'
-) {
-  return;
-}
+              event.source.type !== 'user' &&
+              event.source.type !== 'group'
+            ) {
+              return;
+            }
+
 
             /*
              * =====================================================
-             * 主動排程器：記錄家庭群組最後一次有人說話
+             * 家庭群組活動記錄
              * =====================================================
              *
-             * 只有真正的家庭群組訊息才會更新冷場計時。
-             * 私訊不會影響家庭群組的冷場判定。
+             * 只有群組訊息會更新家庭群組最後活動時間。
+             *
+             * 私訊不影響家庭群組冷場判定。
+             * =====================================================
              */
+
             if (
               event.source.type === 'group' &&
               event.source.groupId
             ) {
+
               recordFamilyGroupMessage(
                 event.source.groupId,
               );
@@ -322,9 +555,10 @@ app.post(
 
             /*
              * =====================================================
-             * 取得這次聊天來源的記憶區
+             * 取得這次對話的記憶區
              * =====================================================
              */
+
             const conversationKey =
               getConversationKey(
                 event,
@@ -335,29 +569,56 @@ app.post(
              * =====================================================
              * 取得目前訊息之前的記憶
              * =====================================================
+             *
+             * currentMessage 不會先塞進 history。
+             *
+             * 它會另外作為 AI Context 的
+             * currentMessage。
+             *
+             * 這樣 Gemini 能清楚區分：
+             *
+             * 「之前發生什麼」
+             *
+             * 與
+             *
+             * 「現在正在問什麼」。
+             * =====================================================
              */
+
             const historyBeforeMessage =
               getMemory(
                 conversationKey,
               );
 
 
+            console.log(
+              '[AI Memory Debug] conversationKey:',
+              conversationKey,
+            );
+
+
+            console.log(
+              '[AI Memory Debug] history count:',
+              historyBeforeMessage.length,
+            );
+
+
+            console.log(
+              '[AI Memory Debug] history:',
+              JSON.stringify(
+                historyBeforeMessage,
+                null,
+                2,
+              ),
+            );
+
+
             /*
              * =====================================================
              * 主動呼叫總管／家庭目標意圖
              * =====================================================
-             *
-             * 私訊與群組共用同一套判斷。
-             *
-             * 沒有叫總管，但訊息明確是在對家庭成員／全家人說話時，
-             * 仍然進入目標解析流程。
-             *
-             * 例如：
-             * 「大家晚安」
-             * 「小兒子晚安」
-             *
-             * 這些都不需要真的寫「喳子」，也應該能被辨識。
              */
+
             const triggerWords = [
               '大內總管',
               '總管',
@@ -388,10 +649,17 @@ app.post(
 
             /*
              * =====================================================
-             * 既不是叫總管，也沒有家庭目標意圖
-             * → 交給 Observer
+             * 沒有叫總管，也沒有明確家庭目標
+             *
+             * → 保留 Observer 原本流程
+             * =====================================================
+             *
+             * 這一輪不改 Observer。
+             *
+             * Observer 仍然是獨立的被動插話系統。
              * =====================================================
              */
+
             if (!shouldResolveTarget) {
 
               addToMemory(
@@ -435,9 +703,11 @@ app.post(
                       );
                     },
 
+
                   gemini,
 
                   lineClient,
+
 
                   onPassiveReply:
                     (
@@ -457,62 +727,57 @@ app.post(
               return;
             }
 
+
             /*
              * =====================================================
-             * 有叫「總管」
+             * 進入主動 AI Core
              * =====================================================
              */
+
             try {
 
               /*
-               * 去掉總管呼叫名稱。
+               * ===================================================
+               * 去掉「喳子／總管」等呼叫詞。
+               *
+               * 但如果沒有呼叫詞，
+               * 就保留原始訊息。
+               *
+               * 例如：
+               *
+               * 喳子你知道量子糾纏嗎
+               * ↓
+               * 你知道量子糾纏嗎
+               *
+               * 大家晚安
+               * ↓
+               * 大家晚安
+               * ===================================================
                */
+
               const cleanedMessage =
                 hasTrigger
-                  ? userMessage
-                      .replace(/大內總管/g, '')
-                      .replace(/總管/g, '')
-                      .replace(/內內/g, '')
-                      .replace(/喳子/g, '')
-                      .trim()
+                  ? cleanTriggerWords(
+                      userMessage,
+                    )
                   : userMessage.trim();
 
 
               /*
                * =====================================================
-               * 目前說話者
+               * 家庭目標解析
+               * =====================================================
+               *
+               * 這部分保留原本設計。
+               *
+               * AI Core 不負責判斷 LINE 要 @誰。
+               *
+               * Resolver 負責確認對象。
+               *
+               * LINE 傳送層負責真正 @。
                * =====================================================
                */
-              const speakerContext =
-                familyMember
-                  ? `
-【目前說話者】
 
-身份：${familyMember.identity}
-家庭角色：${familyMember.role}
-家庭地位：${familyMember.authority}
-個性：${familyMember.personality}
-互動方式：${familyMember.interaction}
-總管對此人的稱呼：${familyMember.mentionName}
-
-這個人就是目前正在和你說話的人。
-請依照這個人的家庭身份與互動方式自然回應。
-
-不要把目前說話者與目前要找／聯絡的人混為一談。
-`
-                  : `
-【目前說話者】
-
-目前說話者尚未登記在家庭成員資料中。
-不要自行猜測其家庭身份。
-`;
-
-
-              /*
-               * =====================================================
-               * 判斷是否要叫所有人
-               * =====================================================
-               */
               const wantsAll =
                 ALL_TARGET_WORDS.some(
                   (word) =>
@@ -522,21 +787,6 @@ app.post(
                 );
 
 
-              /*
-               * =====================================================
-               * 解析目標人物
-               * =====================================================
-               *
-               * ALL：
-               * 直接指定全體。
-               *
-               * USER：
-               * 使用原本的 family-resolver。
-               *
-               * 這裡會把 Resolver 回傳的 FamilyTarget
-               * 補上一個 type: 'user'，
-               * 讓 TypeScript 可以明確區分兩種目標。
-               */
               const resolvedFamilyTarget =
                 wantsAll
                   ? null
@@ -561,9 +811,10 @@ app.post(
 
               /*
                * =====================================================
-               * 紀錄解析結果
+               * CMD 顯示解析結果
                * =====================================================
                */
+
               if (familyTarget) {
 
                 if (
@@ -587,105 +838,128 @@ app.post(
 
               /*
                * =====================================================
-               * 目標人物上下文
+               * 建立真正的 AI Context
+               * =====================================================
+               *
+               * Memory
+               * ↓
+               * normalizeConversationMessages()
+               * ↓
+               * AiContext
+               * ↓
+               * AI Core
+               * ↓
+               * Gemini
+               *
+               * 這裡不再讓 index.ts 自己處理
+               * Memory 的欄位名稱。
                * =====================================================
                */
-              const targetContext =
-                familyTarget
-                  ? familyTarget.type === 'all'
-                    ? `
-【目前要找／聯絡的對象】
 
-目標：全體家庭成員
-
-使用者要求你聯絡所有人。
-程式會在群組中使用真正的 LINE @All。
-
-不要把「所有人」當成某一個家庭成員。
-`
-                    : `
-【目前要找／聯絡的家庭成員】
-
-身份：${familyTarget.member.identity}
-總管對此人的稱呼：${familyTarget.member.mentionName}
-LINE User ID：${familyTarget.userId}
-
-這是一位真實存在、已登記的家庭成員。
-程式已經確認這個人的身份。
-
-這個人不是目前說話者。
-這個人是目前說話者要求你找／聯絡的對象。
-
-不要否認這個人的存在。
-不要說自己沒有實體的這位家庭成員。
-`
-                  : `
-【目前要找／聯絡的對象】
-
-目前沒有解析出特定的家庭成員。
-不要自行猜測目標人物。
-`;
-
-
-              /*
-               * =====================================================
-               * 提供給 Gemini 的完整上下文
-               * =====================================================
-               */
-              const messageForGemini =
-                `${speakerContext}
-
-${targetContext}
-
-【目前訊息】
-
-${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}
-
-【重要判斷規則】
-
-1. 目前說話者與目前要找的人是兩個不同概念。
-2. familyMember 代表目前說話者。
-3. familyTarget 代表目前要找／聯絡的對象。
-4. 如果兩者不同，絕對不要混淆。
-5. 如果 familyTarget 已經存在，代表程式已經確認這位家庭成員。
-6. 不要自行否認 familyTarget 的存在。
-7. 如果目標是全體家庭成員，程式會執行真正的 LINE @All。
-8. 自然理解家庭設定，不要直接朗讀設定資料。
-`;
-
-
-              /*
-               * =====================================================
-               * 建立 Gemini Prompt
-               * =====================================================
-               */
-              const prompt =
-                buildConversationPrompt(
+              const aiContext =
+                createAiContext(
+                  event,
+                  familyMember,
                   historyBeforeMessage,
-                  messageForGemini,
+                  cleanedMessage ||
+                    '有人在聊天中叫你，請自然地回應。',
                 );
 
 
               /*
                * =====================================================
-               * Gemini 回覆
+               * AI Memory Debug
+               * =====================================================
+               *
+               * 這裡額外確認：
+               *
+               * Gemini 實際拿到多少則 Context。
+               *
+               * 如果 history count = 2，
+               * 但 AI Context count = 0，
+               * 就代表轉換層有問題。
+               *
+               * 修正後應該一致。
                * =====================================================
                */
+
+              console.log(
+                '[AI Context Debug] recentMessages count:',
+                aiContext.recentMessages.length,
+              );
+
+
+              console.log(
+                '[AI Context Debug] recentMessages:',
+                JSON.stringify(
+                  aiContext.recentMessages,
+                  null,
+                  2,
+                ),
+              );
+
+
+              /*
+               * =====================================================
+               * 執行 AI Core
+               * =====================================================
+               */
+
+              const aiResult =
+                await runAiCore(
+                  {
+                    gemini,
+
+                    context:
+                      aiContext,
+                  },
+                );
+
+
               const replyText =
-                await replyWithGemini(
-                  event.replyToken,
-                  prompt,
-                  event.source.type === 'group'
-                    ? familyTarget
-                    : null,
-                );
+                aiResult.text.trim();
 
 
               /*
                * =====================================================
-               * 記憶
+               * 傳送 LINE 回覆
+               * =====================================================
+               *
+               * AI Core 只負責：
+               *
+               * Gemini → 回答
+               *
+               * LINE mention：
+               *
+               * index.ts → 執行
                * =====================================================
                */
+
+              await sendAiReply(
+                event.replyToken,
+                replyText,
+                event.source.type === 'group'
+                  ? familyTarget
+                  : null,
+              );
+
+
+              /*
+               * =====================================================
+               * 成功後才寫入記憶
+               * =====================================================
+               *
+               * AI 在生成時看到的是：
+               *
+               * historyBeforeMessage
+               * +
+               * currentMessage
+               *
+               * 回答成功後，
+               * 才把 user / assistant 寫入下一輪記憶。
+               * =====================================================
+               */
+
               addToMemory(
                 conversationKey,
                 'user',
@@ -707,6 +981,7 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}
                * 錯誤處理
                * =====================================================
                */
+
               logError(
                 '主動呼叫總管失敗',
                 error,
@@ -766,14 +1041,25 @@ ${cleanedMessage || '有人在聊天中叫你，請自然地回應。'}
 );
 
 
-/* =========================================================
- * Gemini 正常主動回覆
+/**
+ * =========================================================
+ * AI 回覆送出
+ * =========================================================
+ *
+ * AI Core 只負責產生文字。
+ *
+ * 真正的 LINE：
+ *
+ * - replyMessage
+ * - @ALL
+ * - @指定成員
+ *
+ * 都在這裡處理。
  * ========================================================= */
 
-
-async function replyWithGemini(
+async function sendAiReply(
   replyToken: string,
-  prompt: string,
+  replyText: string,
 
   familyTarget?:
     | {
@@ -786,177 +1072,173 @@ async function replyWithGemini(
 
         member: {
           identity: string;
+
           mentionName: string;
         };
       }
     | null,
+): Promise<void> {
 
-): Promise<string> {
-
-  /*
-   * =========================================================
-   * 呼叫 Gemini
-   * =========================================================
-   */
-  const response =
-    await gemini.models.generateContent(
-      {
-        model:
-          'gemini-3.5-flash-lite',
-
-        contents:
-          prompt,
-
-        config: {
-          systemInstruction:
-            SYSTEM_INSTRUCTION,
-        },
-      },
+  const safeReply =
+    replyText.slice(
+      0,
+      4950,
     );
 
 
   /*
    * =========================================================
-   * Gemini 回覆內容
+   * @ALL
    * =========================================================
    */
-  const replyText =
-    response.text?.trim() ||
-    '我剛剛好像沒有想好要怎麼回答。';
 
+  if (
+    familyTarget &&
+    familyTarget.type === 'all'
+  ) {
 
-  /*
-   * =========================================================
-   * 有指定目標
-   * =========================================================
-   */
-  if (familyTarget) {
-
-    /*
-     * ---------------------------------------------------------
-     * @ALL
-     * ---------------------------------------------------------
-     */
-    if (
-      familyTarget.type === 'all'
-    ) {
-
-      await lineClient.replyMessage(
-        {
-          replyToken,
-
-          messages: [
-            {
-              type: 'textV2',
-
-              text:
-                `{target} ${replyText.slice(0, 4950)}`,
-
-              substitution: {
-                target: {
-                  type: 'mention',
-
-                  mentionee: {
-                    type: 'all',
-                  },
-                },
-              },
-            },
-          ],
-        },
-      );
-
-
-    } else {
-
-      /*
-       * ---------------------------------------------------------
-       * @單一家庭成員
-       * ---------------------------------------------------------
-       */
-      await lineClient.replyMessage(
-        {
-          replyToken,
-
-          messages: [
-            {
-              type: 'textV2',
-
-              text:
-                `{target} ${replyText.slice(0, 4950)}`,
-
-              substitution: {
-                target: {
-                  type: 'mention',
-
-                  mentionee: {
-                    type: 'user',
-
-                    userId:
-                      familyTarget.userId,
-                  },
-                },
-              },
-            },
-          ],
-        },
-      );
-    }
-
-
-  } else {
-
-    /*
-     * =========================================================
-     * 一般文字回覆
-     * =========================================================
-     */
     await lineClient.replyMessage(
       {
         replyToken,
 
         messages: [
           {
-            type: 'text',
+            type: 'textV2',
 
             text:
-              replyText.slice(
-                0,
-                5000,
-              ),
+              `{target} ${safeReply}`,
+
+            substitution: {
+              target: {
+                type: 'mention',
+
+                mentionee: {
+                  type: 'all',
+                },
+              },
+            },
           },
         ],
       },
     );
+
+
+    return;
   }
 
 
-  return replyText;
+  /*
+   * =========================================================
+   * @單一家庭成員
+   * =========================================================
+   */
+
+  if (
+    familyTarget &&
+    familyTarget.type === 'user'
+  ) {
+
+    await lineClient.replyMessage(
+      {
+        replyToken,
+
+        messages: [
+          {
+            type: 'textV2',
+
+            text:
+              `{target} ${safeReply}`,
+
+            substitution: {
+              target: {
+                type: 'mention',
+
+                mentionee: {
+                  type: 'user',
+
+                  userId:
+                    familyTarget.userId,
+                },
+              },
+            },
+          },
+        ],
+      },
+    );
+
+
+    return;
+  }
+
+
+  /*
+   * =========================================================
+   * 一般文字回覆
+   * =========================================================
+   */
+
+  await lineClient.replyMessage(
+    {
+      replyToken,
+
+      messages: [
+        {
+          type: 'text',
+
+          text:
+            replyText.slice(
+              0,
+              5000,
+            ),
+        },
+      ],
+    },
+  );
 }
 
 
-/* =========================================================
+/**
+ * =========================================================
  * 主動訊息產生器
  * =========================================================
  *
  * 固定晚安：
- * 直接使用指定內容，不讓 Gemini 自由改寫。
+ * 直接使用指定內容。
  *
  * 冷場：
- * 交給 Gemini 依照總管人格自然生成一句短話。
+ * 交給 Gemini 生成一句短話。
+ *
+ * 這部分暫時維持原本設計。
  * ========================================================= */
 
 async function generateProactiveReply(
-  type: 'good-night' | 'silence',
+  type:
+    | 'good-night'
+    | 'silence',
 ): Promise<string> {
 
-  if (type === 'good-night') {
+  /*
+   * =========================================================
+   * 固定晚安
+   * =========================================================
+   */
+
+  if (
+    type === 'good-night'
+  ) {
+
     return (
       '諸位，夜深了，奴才先向各位道一聲晚安。' +
       '若還有什麼吩咐，隨時喚奴才一聲便是。'
     );
   }
 
+
+  /*
+   * =========================================================
+   * 冷場主動訊息
+   * =========================================================
+   */
 
   const response =
     await gemini.models.generateContent(
@@ -968,13 +1250,16 @@ async function generateProactiveReply(
 你現在是這個家庭的「大內總管」。
 
 目前家庭群組已經連續一段時間沒有人說話。
+
 你現在要主動打破冷清。
 
 請只說一句自然、簡短、有總管性格的話。
+
 可以像是在宮門口主動探頭看看眾人是否還醒著，
 可以帶一點幽默、關心或宮廷感。
 
 不要提到：
+
 - 系統
 - 排程
 - 冷場
@@ -984,6 +1269,7 @@ async function generateProactiveReply(
 - AI
 
 不要說自己需要休息或要下線。
+
 不要假裝有人剛剛叫你。
 
 直接輸出要在家庭群組中說的那一句話。
@@ -1004,7 +1290,8 @@ async function generateProactiveReply(
 }
 
 
-/* =========================================================
+/**
+ * =========================================================
  * 啟動
  * ========================================================= */
 
@@ -1028,6 +1315,7 @@ app.listen(
      * 啟動主動訊息排程器
      * =====================================================
      */
+
     startProactiveScheduler(
       lineClient,
       generateProactiveReply,

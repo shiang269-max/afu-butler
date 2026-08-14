@@ -3,121 +3,79 @@
  * AI Context
  * =========================================================
  *
- * 這個檔案只負責整理「總管大腦」需要知道的環境資訊。
+ * 負責將目前 LINE / 家庭環境整理成統一 AI Context。
  *
- * 它不負責：
- * - 呼叫 Gemini
- * - 發送 LINE 訊息
- * - @任何人
- * - 記憶保存
- * - 排程
+ * AI Context 不負責：
+ * - 關鍵字判斷
+ * - 是否回答
+ * - 是否插話
+ * - 是否 @人
+ * - 是否搜尋
+ * - 是否記憶
  *
- * 它只回答一件事情：
- *
- * 「如果現在把這個家庭的情況交給 AI，
- *   AI 應該知道哪些背景？」
- *
+ * 它只負責把既有資料完整交給 AI。
  * =========================================================
  */
 
-/**
- * LINE 對話環境
- */
 export type AiConversationType =
   | 'private'
   | 'group';
 
+
 /**
- * 家庭成員在 AI 情境中的基本資料。
- *
- * 注意：
- * 這裡故意不直接依賴目前 family.ts 的型別。
- * 第一階段先讓 AI Context 成為獨立模組，
- * 後面再逐步接回現有家庭資料。
+ * =========================================================
+ * 家庭成員
+ * =========================================================
  */
+
 export interface AiFamilyMemberContext {
+
   userId: string;
 
-  /**
-   * 家庭中的身份，例如：
-   * 主上、老佛爺、大兒子、小兒子
-   */
   identity: string;
 
-  /**
-   * 家庭角色。
-   */
   role?: string;
 
-  /**
-   * 家庭地位。
-   */
   authority?: string;
 
-  /**
-   * 個性。
-   */
   personality?: string;
 
-  /**
-   * 互動方式。
-   */
   interaction?: string;
 
-  /**
-   * 總管對此人的稱呼。
-   */
   mentionName?: string;
 }
 
-/**
- * 一則短期對話訊息。
- *
- * 目前專案已經有最近 12 則訊息的記憶，
- * 這裡只是提供一個 AI 可以理解的標準格式。
- */
-export interface AiConversationMessage {
-  role: 'user' | 'assistant';
 
-  /**
-   * LINE User ID。
-   *
-   * assistant 訊息可以沒有 userId。
-   */
+/**
+ * =========================================================
+ * 對話訊息
+ * =========================================================
+ */
+
+export interface AiConversationMessage {
+
+  role:
+    | 'user'
+    | 'assistant';
+
   userId?: string;
 
-  /**
-   * 家庭身份。
-   */
   identity?: string;
 
-  /**
-   * 訊息內容。
-   */
   content: string;
 
-  /**
-   * 訊息發生時間。
-   *
-   * 可以沒有。
-   */
   timestamp?: string;
 }
 
+
 /**
- * 家庭位置。
- *
- * 目前先不強制要求。
- *
- * 未來可以支援：
- *
- * 「喳子，記住我們家在板橋。」
- *
- * 然後讓總管知道：
- *
- * 「附近」預設是什麼地方。
+ * =========================================================
+ * 家庭位置
+ * =========================================================
  */
+
 export interface AiLocationContext {
+
   name?: string;
 
   city?: string;
@@ -131,87 +89,52 @@ export interface AiLocationContext {
   longitude?: number;
 }
 
-/**
- * AI 總管目前所處的完整環境。
- *
- * 這是未來 ai-core.ts 最重要的輸入之一。
- */
-export interface AiContext {
-  /**
-   * AI 現在在哪一種 LINE 對話中。
-   */
-  conversationType: AiConversationType;
 
-  /**
-   * LINE 群組 ID。
-   *
-   * 私訊時沒有。
-   */
+/**
+ * =========================================================
+ * AI Context
+ * =========================================================
+ */
+
+export interface AiContext {
+
+  conversationType:
+    AiConversationType;
+
   groupId?: string;
 
-  /**
-   * 目前說話者的 LINE User ID。
-   */
   speakerUserId?: string;
 
-  /**
-   * 目前說話者的家庭資料。
-   */
   speaker?: AiFamilyMemberContext;
 
-  /**
-   * 家庭成員列表。
-   */
-  familyMembers: AiFamilyMemberContext[];
+  familyMembers:
+    AiFamilyMemberContext[];
 
-  /**
-   * 最近的短期對話。
-   *
-   * 目前預設就是現有的 12 則上下文，
-   * 但這裡不把 12 寫死。
-   */
-  recentMessages: AiConversationMessage[];
+  recentMessages:
+    AiConversationMessage[];
 
-  /**
-   * 家庭預設位置。
-   */
   location?: AiLocationContext;
 
-  /**
-   * AI 收到這則訊息時的時間。
-   *
-   * 這個欄位之後會由真正的時間工具提供。
-   *
-   * 注意：
-   * Context 只是「提供資料」，
-   * 不自己猜現在時間。
-   */
   currentTime?: string;
 
-  /**
-   * 使用者這次送進來的原始訊息。
-   */
   currentMessage: string;
 
-  /**
-   * 是否為群組訊息。
-   */
   isGroup: boolean;
 
-  /**
-   * 是否為私訊。
-   */
   isPrivate: boolean;
 }
 
+
 /**
- * 建立 AI Context 的輸入資料。
- *
- * 這個型別讓 index.ts 未來可以很容易把
- * 現有資料交給 AI Context。
+ * =========================================================
+ * 建立 Context 的輸入
+ * =========================================================
  */
+
 export interface BuildAiContextInput {
-  conversationType: AiConversationType;
+
+  conversationType:
+    AiConversationType;
 
   groupId?: string;
 
@@ -219,9 +142,11 @@ export interface BuildAiContextInput {
 
   speaker?: AiFamilyMemberContext;
 
-  familyMembers?: AiFamilyMemberContext[];
+  familyMembers?:
+    AiFamilyMemberContext[];
 
-  recentMessages?: AiConversationMessage[];
+  recentMessages?:
+    AiConversationMessage[];
 
   location?: AiLocationContext;
 
@@ -230,26 +155,23 @@ export interface BuildAiContextInput {
   currentMessage: string;
 }
 
+
 /**
- * 建立標準化的 AI Context。
- *
- * 目前不做任何 AI 判斷。
- *
- * 也不會：
- * - 判斷使用者是不是在叫總管
- * - 判斷要不要回覆
- * - 判斷要不要搜尋
- * - 判斷要不要 @人
- *
- * 這些都應該交給後面的 AI Core。
+ * =========================================================
+ * 建立 AI Context
+ * =========================================================
  */
+
 export function buildAiContext(
   input: BuildAiContextInput,
 ): AiContext {
+
   const isGroup =
     input.conversationType === 'group';
 
+
   return {
+
     conversationType:
       input.conversationType,
 
@@ -284,37 +206,196 @@ export function buildAiContext(
   };
 }
 
+
 /**
  * =========================================================
- * 將 Context 轉成給 AI 閱讀的文字
+ * 安全轉換文字
+ * =========================================================
+ */
+
+function safeText(
+  value: unknown,
+): string {
+
+  if (
+    typeof value !== 'string'
+  ) {
+    return '';
+  }
+
+  return value.trim();
+}
+
+
+/**
+ * =========================================================
+ * 兼容既有 Memory 結構
  * =========================================================
  *
- * 注意：
+ * 不假設 memory.ts 只有單一文字欄位名稱。
  *
- * 這裡不是「回答規則」。
+ * 依序嘗試：
+ * - content
+ * - text
+ * - message
  *
- * 只是把環境資訊整理成人類／AI 容易理解的格式。
- *
- * 未來 Gemini 收到的核心概念會類似：
- *
- * 「你現在正在 LINE 家庭群組中。
- *  這是目前正在跟你說話的人。
- *  這是最近的對話。
- *  這是家庭背景。
- *  請理解整體情境後自行決定如何處理。」
- *
- * 而不是：
- *
- * 「看到天氣就做 A，
- *  看到晚安就做 B。」
+ * 這一層只負責轉換，
+ * 不修改原本 Memory。
+ * =========================================================
  */
+
+function getMemoryContent(
+  message: any,
+): string {
+
+  if (
+    typeof message?.content === 'string'
+  ) {
+    return message.content.trim();
+  }
+
+
+  if (
+    typeof message?.text === 'string'
+  ) {
+    return message.text.trim();
+  }
+
+
+  if (
+    typeof message?.message === 'string'
+  ) {
+    return message.message.trim();
+  }
+
+
+  return '';
+}
+
+
+/**
+ * =========================================================
+ * 將 Memory 訊息轉成 AI 訊息
+ * =========================================================
+ */
+
+export function normalizeConversationMessages(
+  history: any[],
+): AiConversationMessage[] {
+
+  if (
+    !Array.isArray(history)
+  ) {
+    return [];
+  }
+
+
+  const result:
+    AiConversationMessage[] = [];
+
+
+  for (
+    const message of history
+  ) {
+
+    const content =
+      getMemoryContent(
+        message,
+      );
+
+
+    if (!content) {
+      continue;
+    }
+
+
+    const normalized:
+      AiConversationMessage = {
+
+      role:
+        message?.role === 'assistant'
+          ? 'assistant'
+          : 'user',
+
+      content,
+
+      userId:
+        typeof message?.userId === 'string'
+          ? message.userId
+          : undefined,
+
+      identity:
+        typeof message?.identity === 'string'
+          ? message.identity
+          : undefined,
+
+      timestamp:
+        typeof message?.timestamp === 'string'
+          ? message.timestamp
+          : undefined,
+    };
+
+
+    result.push(
+      normalized,
+    );
+  }
+
+
+  return result;
+}
+
+
+/**
+ * =========================================================
+ * 建立說話者名稱
+ * =========================================================
+ */
+
+function getMessageSpeakerName(
+  message: AiConversationMessage,
+): string {
+
+  if (
+    message.identity &&
+    message.identity.trim()
+  ) {
+    return message.identity.trim();
+  }
+
+
+  if (
+    message.role === 'assistant'
+  ) {
+    return '大內總管';
+  }
+
+
+  return '家庭成員';
+}
+
+
+/**
+ * =========================================================
+ * 建立 Gemini 可讀 Context
+ * =========================================================
+ */
+
 export function buildAiContextPrompt(
   context: AiContext,
 ): string {
+
   const conversationDescription =
     context.isGroup
       ? 'LINE 家庭群組'
-      : 'LINE 私訊';
+      : 'LINE 家庭私訊';
+
+
+  /*
+   * =======================================================
+   * 目前說話者
+   * =======================================================
+   */
 
   const speakerSection =
     context.speaker
@@ -322,32 +403,42 @@ export function buildAiContextPrompt(
 【目前說話者】
 
 LINE User ID：
-${context.speaker.userId}
+${safeText(context.speaker.userId)}
 
 家庭身份：
-${context.speaker.identity}
+${safeText(context.speaker.identity) || '未設定'}
 
 家庭角色：
-${context.speaker.role ?? '未設定'}
+${safeText(context.speaker.role) || '未設定'}
 
 家庭地位：
-${context.speaker.authority ?? '未設定'}
+${safeText(context.speaker.authority) || '未設定'}
 
 個性：
-${context.speaker.personality ?? '未設定'}
+${safeText(context.speaker.personality) || '未設定'}
 
 互動方式：
-${context.speaker.interaction ?? '未設定'}
+${safeText(context.speaker.interaction) || '未設定'}
 
 總管對此人的稱呼：
-${context.speaker.mentionName ?? '未設定'}
+${safeText(context.speaker.mentionName) || '未設定'}
+
+目前說話者就是正在發送本次訊息的人。
 `
       : `
 【目前說話者】
 
-目前沒有對應到已登記的家庭成員。
+目前說話者沒有對應到已登記的家庭成員。
+
 不要自行猜測其家庭身份。
 `;
+
+
+  /*
+   * =======================================================
+   * 家庭成員
+   * =======================================================
+   */
 
   const familySection =
     context.familyMembers.length > 0
@@ -355,16 +446,21 @@ ${context.speaker.mentionName ?? '未設定'}
 【家庭成員】
 
 ${context.familyMembers
-  .map((member) => {
-    return `
-- ${member.identity}
-  LINE User ID：${member.userId}
-  家庭角色：${member.role ?? '未設定'}
-  家庭地位：${member.authority ?? '未設定'}
-  總管稱呼：${member.mentionName ?? '未設定'}
+  .map(
+    (member) => {
+
+      return `
+- 身份：${safeText(member.identity) || '未設定'}
+  LINE User ID：${safeText(member.userId)}
+  家庭角色：${safeText(member.role) || '未設定'}
+  家庭地位：${safeText(member.authority) || '未設定'}
+  個性：${safeText(member.personality) || '未設定'}
+  互動方式：${safeText(member.interaction) || '未設定'}
+  總管稱呼：${safeText(member.mentionName) || '未設定'}
 `.trim();
-  })
-  .join('\n')}
+    },
+  )
+  .join('\n\n')}
 `
       : `
 【家庭成員】
@@ -372,85 +468,170 @@ ${context.familyMembers
 目前沒有可提供的家庭成員資料。
 `;
 
+
+  /*
+   * =======================================================
+   * 最近對話
+   * =======================================================
+   */
+
+  const normalizedMessages =
+    normalizeConversationMessages(
+      context.recentMessages,
+    );
+
+
   const conversationSection =
-    context.recentMessages.length > 0
+    normalizedMessages.length > 0
       ? `
 【最近的 LINE 對話】
 
-${context.recentMessages
-  .map((message) => {
-    const speakerName =
-      message.identity ??
-      (message.role === 'assistant'
-        ? '總管'
-        : '家庭成員');
+以下內容是真正已經發生過的對話，
+不是範例，也不是假設。
 
-    return `${speakerName}：${message.content}`;
-  })
+請把它視為目前這段 LINE 對話的短期上下文。
+
+對話依照發生順序排列：
+
+${normalizedMessages
+  .map(
+    (message) => {
+
+      const speakerName =
+        getMessageSpeakerName(
+          message,
+        );
+
+
+      const timestamp =
+        safeText(
+          message.timestamp,
+        );
+
+
+      if (timestamp) {
+
+        return (
+          `[${timestamp}] ` +
+          `${speakerName}：` +
+          `${message.content}`
+        );
+      }
+
+
+      return (
+        `${speakerName}：` +
+        `${message.content}`
+      );
+    },
+  )
   .join('\n')}
 `
       : `
 【最近的 LINE 對話】
 
-目前沒有其他短期對話資料。
+目前沒有可用的短期對話歷史。
+
+只有在這個區段真的沒有資料時，
+才可以視為目前沒有短期記憶。
+
+不要因為某一句沒有被理解，
+就自行宣稱「使用者沒有提供過」。
 `;
+
+
+  /*
+   * =======================================================
+   * 地點
+   * =======================================================
+   */
 
   const locationSection =
     context.location
       ? `
-【家庭／目前位置】
+【家庭位置】
 
 名稱：
-${context.location.name ?? '未設定'}
+${safeText(context.location.name) || '未設定'}
 
 城市：
-${context.location.city ?? '未設定'}
+${safeText(context.location.city) || '未設定'}
 
 行政區：
-${context.location.district ?? '未設定'}
+${safeText(context.location.district) || '未設定'}
 
 地址：
-${context.location.address ?? '未設定'}
+${safeText(context.location.address) || '未設定'}
+
+緯度：
+${context.location.latitude ?? '未設定'}
+
+經度：
+${context.location.longitude ?? '未設定'}
 `
       : `
-【家庭／目前位置】
+【家庭位置】
 
-目前沒有設定位置。
-不要自行假設使用者的 GPS 位置。
+目前沒有設定固定家庭位置。
+
+不要自行假設家庭的精確位置。
+
+注意：
+「家庭固定位置」與「使用者剛才在對話中告訴你的目前位置」
+是兩件不同的事情。
+
+如果最近對話中明確出現目前位置，
+應優先把那段對話當作短期上下文理解。
 `;
+
+
+  /*
+   * =======================================================
+   * 時間
+   * =======================================================
+   */
 
   const timeSection =
     context.currentTime
       ? `
 【目前時間】
 
-${context.currentTime}
+${safeText(context.currentTime)}
 `
       : `
 【目前時間】
 
-目前尚未提供可靠的即時時間。
-不要自行猜測現在時間。
+目前沒有由程式額外提供時間資料。
+
+不要因為 Context 沒有時間欄位，
+就說自己完全不知道時間。
 `;
 
-  return `
-【LINE 對話環境】
 
-你目前存在於：
+  /*
+   * =======================================================
+   * 最終 Context
+   * =======================================================
+   */
+
+  return `
+【你目前存在的環境】
+
+你現在存在於：
 ${conversationDescription}
 
-你不是在獨立的聊天視窗中回答。
-你正在這個家庭的 LINE 對話環境中與家人互動。
+你正在 LINE 裡，
+以這個家庭的「大內總管」身份與家人互動。
 
-你應該理解：
-- 誰正在跟你說話
-- 這一家人的家庭關係
-- 最近正在討論什麼
-- 使用者這次真正想表達什麼
-- 「這個」、「那個」、「附近」、「他」、「她」等詞在目前上下文中可能指向什麼
+你現在收到的 Context 包含：
 
-你不是只能等待固定關鍵字才能回答。
-你應該把自己視為這個家庭中的大內總管，正常理解並參與對話。
+- LINE 對話環境
+- 目前說話者
+- 家庭成員
+- 最近真正發生的對話
+- 家庭固定位置
+- 目前時間
+- 本次訊息
 
 ${speakerSection}
 
@@ -462,8 +643,22 @@ ${locationSection}
 
 ${timeSection}
 
-【目前收到的訊息】
+【目前訊息】
 
-${context.currentMessage}
+${safeText(context.currentMessage)}
+
+【上下文理解要求】
+
+1. 最近對話是真實發生過的內容。
+2. 回答目前訊息前，先理解最近對話。
+3. 使用者說「剛剛」、「前面」、「那個」、「他」、「她」時，
+   優先從最近對話尋找對應內容。
+4. 如果使用者剛才明確提供一個地點、人物、數字、選擇或條件，
+   後續相關問題應該使用該資訊。
+5. 不要因為某項資料沒有被寫入「家庭固定資料」，
+   就忽略它在最近對話中的存在。
+6. 如果最近對話確實沒有相關資訊，再表示資訊不足。
+7. 不要否認最近對話中明確存在的資訊。
+8. 不要自行創造不存在的資訊。
 `.trim();
 }
