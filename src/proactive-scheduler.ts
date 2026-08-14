@@ -1,5 +1,10 @@
 import { messagingApi } from '@line/bot-sdk';
 
+import {
+  loadFamilyGroupId,
+  saveFamilyGroupId,
+} from './family-group-state';
+
 
 /*
  * =========================================================
@@ -65,9 +70,6 @@ const GOOD_MORNING_MINUTE = 0;
  * =========================================================
  * 冷場時間
  * =========================================================
- *
- * 連續 6 小時沒有人說話，
- * 才可以觸發冷場主動訊息。
  */
 
 const SILENCE_HOURS = 6;
@@ -91,9 +93,6 @@ const SILENCE_QUIET_END_HOUR = 6;
  * =========================================================
  * 每日冷場主動次數上限
  * =========================================================
- *
- * 22:30 晚安不計入。
- * 06:00 早安不計入。
  */
 
 const MAX_SILENCE_REPLIES_PER_DAY = 2;
@@ -103,16 +102,10 @@ const MAX_SILENCE_REPLIES_PER_DAY = 2;
  * =========================================================
  * 排程檢查頻率
  * =========================================================
- *
- * 每 30 秒檢查一次。
- *
- * 注意：
- *
- * 30 秒只是檢查頻率，
- * 並不是 30 秒沒人說話就觸發。
  */
 
-const CHECK_INTERVAL_MS = 30 * 1000;
+const CHECK_INTERVAL_MS =
+  30 * 1000;
 
 
 /*
@@ -122,41 +115,89 @@ const CHECK_INTERVAL_MS = 30 * 1000;
  */
 
 interface GroupState {
-  /*
-   * 最後一次家人在群組說話的時間
-   */
-  lastHumanMessageAt: number | null;
 
-  /*
-   * 今天是否已經發過晚安
-   */
-  lastGoodNightDate: string | null;
+  lastHumanMessageAt:
+    number | null;
 
-  /*
-   * 今天是否已經發過早安
-   */
-  lastGoodMorningDate: string | null;
+  lastGoodNightDate:
+    string | null;
 
-  /*
-   * 冷場次數屬於哪一天
-   */
-  silenceRepliesDate: string | null;
+  lastGoodMorningDate:
+    string | null;
 
-  /*
-   * 今天已經主動打破冷場幾次
-   */
-  silenceRepliesCount: number;
+  silenceRepliesDate:
+    string | null;
+
+  silenceRepliesCount:
+    number;
 }
 
 
 /*
  * =========================================================
- * 所有群組狀態
+ * 已知家庭群組
  * =========================================================
  */
 
 const groupStates =
   new Map<string, GroupState>();
+
+
+/*
+ * =========================================================
+ * 程式啟動時讀取已保存的家庭群組
+ * =========================================================
+ */
+
+function loadSavedFamilyGroup(): void {
+
+  const groupId =
+    loadFamilyGroupId();
+
+
+  if (!groupId) {
+
+    console.log(
+      '[Proactive Scheduler] 尚未保存家庭群組 ID',
+    );
+
+    return;
+  }
+
+
+  /*
+   * 重新啟動後：
+   *
+   * 我們知道群組是哪一個，
+   * 但不知道上次群組最後說話的時間。
+   *
+   * 因此 lastHumanMessageAt 先保持 null。
+   *
+   * 等重新收到第一則群組訊息後，
+   * 才重新開始計算 6 小時冷場。
+   */
+
+  groupStates.set(
+    groupId,
+    {
+      lastHumanMessageAt: null,
+
+      lastGoodNightDate: null,
+
+      lastGoodMorningDate: null,
+
+      silenceRepliesDate: null,
+
+      silenceRepliesCount: 0,
+    },
+  );
+
+
+  console.log(
+    '[Proactive Scheduler] 已恢復家庭群組',
+    groupId,
+  );
+}
 
 
 /*
@@ -176,15 +217,21 @@ function getGroupState(
   if (!state) {
 
     state = {
-      lastHumanMessageAt: null,
 
-      lastGoodNightDate: null,
+      lastHumanMessageAt:
+        null,
 
-      lastGoodMorningDate: null,
+      lastGoodNightDate:
+        null,
 
-      silenceRepliesDate: null,
+      lastGoodMorningDate:
+        null,
 
-      silenceRepliesCount: 0,
+      silenceRepliesDate:
+        null,
+
+      silenceRepliesCount:
+        0,
     };
 
 
@@ -201,7 +248,7 @@ function getGroupState(
 
 /*
  * =========================================================
- * 取得台灣現在時間
+ * 台灣現在時間
  * =========================================================
  */
 
@@ -219,31 +266,47 @@ function getTaipeiNow(): {
     new Intl.DateTimeFormat(
       'en-CA',
       {
-        timeZone: TIME_ZONE,
+        timeZone:
+          TIME_ZONE,
 
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
+        year:
+          'numeric',
 
-        hour: '2-digit',
-        minute: '2-digit',
+        month:
+          '2-digit',
 
-        hour12: false,
+        day:
+          '2-digit',
+
+        hour:
+          '2-digit',
+
+        minute:
+          '2-digit',
+
+        hour12:
+          false,
       },
     );
 
 
   const parts =
-    formatter.formatToParts(now);
+    formatter.formatToParts(
+      now,
+    );
 
 
   const values:
     Record<string, string> = {};
 
 
-  for (const part of parts) {
+  for (
+    const part of parts
+  ) {
 
-    if (part.type !== 'literal') {
+    if (
+      part.type !== 'literal'
+    ) {
 
       values[part.type] =
         part.value;
@@ -252,6 +315,7 @@ function getTaipeiNow(): {
 
 
   return {
+
     date:
       `${values.year}-${values.month}-${values.day}`,
 
@@ -266,14 +330,8 @@ function getTaipeiNow(): {
 
 /*
  * =========================================================
- * 判斷是否處於冷場夜間禁用時間
+ * 判斷冷場夜間禁用
  * =========================================================
- *
- * 23:00～05:59
- * → true
- *
- * 06:00 起
- * → false
  */
 
 function isSilenceQuietHours(
@@ -281,29 +339,52 @@ function isSilenceQuietHours(
 ): boolean {
 
   return (
-    hour >= SILENCE_QUIET_START_HOUR ||
-    hour < SILENCE_QUIET_END_HOUR
+    hour >=
+      SILENCE_QUIET_START_HOUR
+    ||
+    hour <
+      SILENCE_QUIET_END_HOUR
   );
 }
 
 
 /*
  * =========================================================
- * 記錄群組有人說話
+ * 記錄家庭群組有人說話
  * =========================================================
  *
- * index.ts 收到群組訊息時呼叫。
+ * index.ts 收到群組文字訊息後呼叫。
  *
- * 私訊不要呼叫。
+ * 同時保存 groupId。
  */
 
 export function recordFamilyGroupMessage(
   groupId: string,
 ): void {
 
-  const state =
-    getGroupState(groupId);
+  if (!groupId) {
+    return;
+  }
 
+
+  /*
+   * 永久保存群組 ID。
+   */
+
+  saveFamilyGroupId(
+    groupId,
+  );
+
+
+  const state =
+    getGroupState(
+      groupId,
+    );
+
+
+  /*
+   * 更新最後一次家人說話時間。
+   */
 
   state.lastHumanMessageAt =
     Date.now();
@@ -327,14 +408,19 @@ async function sendProactiveMessage(
 
   await lineClient.pushMessage(
     {
-      to: groupId,
+      to:
+        groupId,
 
       messages: [
         {
-          type: 'text',
+          type:
+            'text',
 
           text:
-            text.slice(0, 5000),
+            text.slice(
+              0,
+              5000,
+            ),
         },
       ],
     },
@@ -344,7 +430,7 @@ async function sendProactiveMessage(
 
 /*
  * =========================================================
- * 固定晚安內容
+ * 固定晚安
  * =========================================================
  */
 
@@ -359,7 +445,7 @@ function getGoodNightMessage(): string {
 
 /*
  * =========================================================
- * 固定早安內容
+ * 固定早安
  * =========================================================
  */
 
@@ -374,7 +460,7 @@ function getGoodMorningMessage(): string {
 
 /*
  * =========================================================
- * 判斷是否正好到達指定時間
+ * 指定時間判斷
  * =========================================================
  */
 
@@ -406,7 +492,8 @@ function resetDailySilenceCountIfNeeded(
 ): void {
 
   if (
-    state.silenceRepliesDate !== date
+    state.silenceRepliesDate !==
+    date
   ) {
 
     state.silenceRepliesDate =
@@ -420,7 +507,7 @@ function resetDailySilenceCountIfNeeded(
 
 /*
  * =========================================================
- * 22:30 固定晚安
+ * 22:30 晚安
  * =========================================================
  */
 
@@ -453,12 +540,9 @@ async function handleGoodNight(
   }
 
 
-  /*
-   * 同一天只發一次。
-   */
-
   if (
-    state.lastGoodNightDate === date
+    state.lastGoodNightDate ===
+    date
   ) {
 
     return;
@@ -481,7 +565,7 @@ async function handleGoodNight(
 
 /*
  * =========================================================
- * 06:00 固定早安
+ * 06:00 早安
  * =========================================================
  */
 
@@ -514,12 +598,9 @@ async function handleGoodMorning(
   }
 
 
-  /*
-   * 同一天只發一次。
-   */
-
   if (
-    state.lastGoodMorningDate === date
+    state.lastGoodMorningDate ===
+    date
   ) {
 
     return;
@@ -540,17 +621,9 @@ async function handleGoodMorning(
 
 
   /*
-   * 06:00 早安本身就是一次主動開場。
+   * 早安本身就是一次主動開場。
    *
-   * 所以把冷場基準重設為現在。
-   *
-   * 避免：
-   *
-   * 06:00 早安
-   * ↓
-   * 下一輪檢查
-   * ↓
-   * 又判定已經 6 小時沒人說話
+   * 因此重新開始計算冷場。
    */
 
   state.lastHumanMessageAt =
@@ -560,7 +633,7 @@ async function handleGoodMorning(
 
 /*
  * =========================================================
- * 冷場主動訊息
+ * 冷場主動
  * =========================================================
  */
 
@@ -574,7 +647,9 @@ async function handleSilence(
 
   generateProactiveReply:
     (
-      type: 'good-night' | 'silence',
+      type:
+        'good-night' |
+        'silence',
     ) => Promise<string>,
 
   date: string,
@@ -583,17 +658,15 @@ async function handleSilence(
 ): Promise<void> {
 
   /*
-   * =======================================================
-   * 夜間禁用
-   * =======================================================
+   * 23:00～06:00
    *
-   * 這裡只限制冷場主動。
-   *
-   * 正常對話完全不經過這個判斷。
+   * 只禁止冷場主動。
    */
 
   if (
-    isSilenceQuietHours(hour)
+    isSilenceQuietHours(
+      hour,
+    )
   ) {
 
     return;
@@ -601,24 +674,22 @@ async function handleSilence(
 
 
   /*
-   * 沒有任何群組活動紀錄，
+   * 沒有最近群組訊息，
    * 就沒有冷場基準。
    */
 
   if (
-    state.lastHumanMessageAt === null
+    state.lastHumanMessageAt ===
+    null
   ) {
 
     return;
   }
 
 
-  /*
-   * 每日最多 2 次。
-   */
-
   resetDailySilenceCountIfNeeded(
     state,
+
     date,
   );
 
@@ -631,11 +702,6 @@ async function handleSilence(
     return;
   }
 
-
-  /*
-   * 計算距離最後一次家人說話
-   * 已經經過多久。
-   */
 
   const silenceDurationMs =
     Date.now() -
@@ -657,14 +723,6 @@ async function handleSilence(
     return;
   }
 
-
-  /*
-   * 交給 index.ts 的 Gemini 主動回覆產生器。
-   *
-   * 這裡只會傳：
-   *
-   * 'silence'
-   */
 
   const reply =
     await generateProactiveReply(
@@ -690,17 +748,14 @@ async function handleSilence(
   );
 
 
-  /*
-   * 增加今日冷場主動次數。
-   */
-
-  state.silenceRepliesCount += 1;
+  state.silenceRepliesCount +=
+    1;
 
 
   /*
    * 總管剛剛已經主動說話。
    *
-   * 因此重新計算 6 小時。
+   * 因此重新開始計算 6 小時。
    */
 
   state.lastHumanMessageAt =
@@ -722,7 +777,9 @@ async function checkGroup(
 
   generateProactiveReply:
     (
-      type: 'good-night' | 'silence',
+      type:
+        'good-night' |
+        'silence',
     ) => Promise<string>,
 ): Promise<void> {
 
@@ -731,12 +788,10 @@ async function checkGroup(
 
 
   const state =
-    getGroupState(groupId);
+    getGroupState(
+      groupId,
+    );
 
-
-  /*
-   * 每天重新計算冷場次數。
-   */
 
   resetDailySilenceCountIfNeeded(
     state,
@@ -746,9 +801,7 @@ async function checkGroup(
 
 
   /*
-   * =======================================================
-   * ① 22:30 晚安
-   * =======================================================
+   * 22:30 晚安
    */
 
   await handleGoodNight(
@@ -767,9 +820,7 @@ async function checkGroup(
 
 
   /*
-   * =======================================================
-   * ② 06:00 早安
-   * =======================================================
+   * 06:00 早安
    */
 
   await handleGoodMorning(
@@ -788,11 +839,7 @@ async function checkGroup(
 
 
   /*
-   * =======================================================
-   * ③ 冷場主動
-   * =======================================================
-   *
-   * 只有這裡受到 23:00～06:00 限制。
+   * 冷場主動
    */
 
   await handleSilence(
@@ -813,7 +860,7 @@ async function checkGroup(
 
 /*
  * =========================================================
- * 啟動總管主動排程器
+ * 啟動排程器
  * =========================================================
  */
 
@@ -823,9 +870,18 @@ export function startProactiveScheduler(
 
   generateProactiveReply:
     (
-      type: 'good-night' | 'silence',
+      type:
+        'good-night' |
+        'silence',
     ) => Promise<string>,
 ): void {
+
+  /*
+   * 先恢復以前保存的家庭群組。
+   */
+
+  loadSavedFamilyGroup();
+
 
   console.log(
     '總管主動訊息排程器已啟動',
@@ -858,7 +914,7 @@ export function startProactiveScheduler(
 
 
   /*
-   * 檢查所有已知家庭群組。
+   * 啟動時檢查一次。
    */
 
   const checkAllGroups =
@@ -892,18 +948,11 @@ export function startProactiveScheduler(
     };
 
 
-  /*
-   * 啟動時先檢查一次。
-   */
-
   void checkAllGroups();
 
 
   /*
    * 每 30 秒檢查一次。
-   *
-   * 30 秒只是檢查頻率，
-   * 不是冷場時間。
    */
 
   setInterval(

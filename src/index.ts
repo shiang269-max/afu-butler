@@ -68,6 +68,174 @@ const gemini =
   });
 
 
+/*
+ * =========================================================
+ * 家庭目標意圖判斷
+ * =========================================================
+ *
+ * 私訊與群組共用同一套目標辨識邏輯。
+ *
+ * 但不能看到「大家」兩個字就直接當成 @ALL，
+ * 否則一般聊天例如「大家今天吃飯了嗎」也會被誤判。
+ *
+ * 因此只有在以下情況才進入 family-resolver：
+ *
+ * 1. 明確的叫人／聯絡／提醒等動作
+ * 2. 早安、晚安等直接對全體說話的情境
+ * 3. 訊息本身就是「大家／全家人／所有人」等稱呼
+ * 4. 明確提到已登記家庭成員，且符合上述情境
+ *
+ * 這讓「大家晚安」可以在私訊安全測試，
+ * 同時避免普通聊天被誤判成 @ALL。
+ */
+
+const ALL_TARGET_WORDS = [
+  '所有人',
+  '大家',
+  '全家人',
+  '全員',
+];
+
+
+const FAMILY_TARGET_ACTION_WORDS = [
+  '幫我叫',
+  '幫忙叫',
+  '替我叫',
+  '請叫',
+  '叫',
+  '找',
+  '聯絡',
+  '通知',
+  '提醒',
+  '告訴',
+  '跟',
+  '向',
+  '對',
+];
+
+
+const FAMILY_GREETING_WORDS = [
+  '晚安',
+  '早安',
+  '午安',
+  '早上好',
+  '晚上好',
+];
+
+
+function hasFamilyTargetIntent(
+  message: string,
+): boolean {
+
+  const text =
+    message.trim();
+
+
+  if (!text) {
+    return false;
+  }
+
+
+  const hasAllTarget =
+    ALL_TARGET_WORDS.some(
+      (word) =>
+        text.includes(word),
+    );
+
+
+  const hasGreeting =
+    FAMILY_GREETING_WORDS.some(
+      (word) =>
+        text.includes(word),
+    );
+
+
+  const hasAction =
+    FAMILY_TARGET_ACTION_WORDS.some(
+      (word) =>
+        text.includes(word),
+    );
+
+
+  /*
+   * 「大家晚安」／「全家人早安」
+   */
+  if (
+    hasAllTarget &&
+    hasGreeting
+  ) {
+    return true;
+  }
+
+
+  /*
+   * 「幫我叫大家」／「通知所有人」
+   */
+  if (
+    hasAllTarget &&
+    hasAction
+  ) {
+    return true;
+  }
+
+
+  /*
+   * 「大家」／「全家人」單獨出現，
+   * 視為直接呼叫這個目標。
+   */
+  if (
+    ALL_TARGET_WORDS.some(
+      (word) =>
+        text === word,
+    )
+  ) {
+    return true;
+  }
+
+
+  /*
+   * 已登記家庭成員的直接稱呼。
+   * 例如：
+   * 「小兒子晚安」
+   * 「叫小兒子」
+   * 「小兒子」
+   */
+  const hasKnownFamilyMember =
+    Object.values(
+      FAMILY_MEMBERS,
+    ).some(
+      (member: any) => {
+
+        const identity =
+          typeof member?.identity === 'string'
+            ? member.identity
+            : '';
+
+        const mentionName =
+          typeof member?.mentionName === 'string'
+            ? member.mentionName
+            : '';
+
+        return (
+          (identity && text.includes(identity)) ||
+          (mentionName && text.includes(mentionName))
+        );
+      },
+    );
+
+
+  if (
+    hasKnownFamilyMember &&
+    (hasGreeting || hasAction)
+  ) {
+    return true;
+  }
+
+
+  return false;
+}
+
+
 app.get('/', (req, res) => {
   res.send(
     'LINE第五個家人正在運作',
@@ -128,12 +296,11 @@ app.post(
              * 目前只處理私訊與群組。
              */
             if (
-              event.source.type !== 'user' &&
-              event.source.type !== 'group'
-            ) {
-              return;
-            }
-
+  event.source.type !== 'user' &&
+  event.source.type !== 'group'
+) {
+  return;
+}
 
             /*
              * =====================================================
@@ -177,8 +344,19 @@ app.post(
 
             /*
              * =====================================================
-             * 主動呼叫總管的觸發詞
+             * 主動呼叫總管／家庭目標意圖
              * =====================================================
+             *
+             * 私訊與群組共用同一套判斷。
+             *
+             * 沒有叫總管，但訊息明確是在對家庭成員／全家人說話時，
+             * 仍然進入目標解析流程。
+             *
+             * 例如：
+             * 「大家晚安」
+             * 「小兒子晚安」
+             *
+             * 這些都不需要真的寫「喳子」，也應該能被辨識。
              */
             const triggerWords = [
               '大內總管',
@@ -197,12 +375,24 @@ app.post(
               );
 
 
+            const hasTargetIntent =
+              hasFamilyTargetIntent(
+                userMessage,
+              );
+
+
+            const shouldResolveTarget =
+              hasTrigger ||
+              hasTargetIntent;
+
+
             /*
              * =====================================================
-             * 沒有叫總管
+             * 既不是叫總管，也沒有家庭目標意圖
+             * → 交給 Observer
              * =====================================================
              */
-            if (!hasTrigger) {
+            if (!shouldResolveTarget) {
 
               addToMemory(
                 conversationKey,
@@ -222,9 +412,6 @@ app.post(
               }
 
 
-              /*
-               * Observer
-               */
               observeMessage(
                 {
                   targetId,
@@ -232,7 +419,6 @@ app.post(
                   userMessage,
 
                   familyMember,
-
 
                   getConversationContext:
                     () => {
@@ -249,11 +435,9 @@ app.post(
                       );
                     },
 
-
                   gemini,
 
                   lineClient,
-
 
                   onPassiveReply:
                     (
@@ -273,7 +457,6 @@ app.post(
               return;
             }
 
-
             /*
              * =====================================================
              * 有叫「總管」
@@ -285,12 +468,14 @@ app.post(
                * 去掉總管呼叫名稱。
                */
               const cleanedMessage =
-                userMessage
-                  .replace(/大內總管/g, '')
-                  .replace(/總管/g, '')
-                  .replace(/內內/g, '')
-                  .replace(/喳子/g, '')
-                  .trim();
+                hasTrigger
+                  ? userMessage
+                      .replace(/大內總管/g, '')
+                      .replace(/總管/g, '')
+                      .replace(/內內/g, '')
+                      .replace(/喳子/g, '')
+                      .trim()
+                  : userMessage.trim();
 
 
               /*
@@ -328,16 +513,8 @@ app.post(
                * 判斷是否要叫所有人
                * =====================================================
                */
-              const allTargetWords = [
-                '所有人',
-                '大家',
-                '全家人',
-                '全員',
-              ];
-
-
               const wantsAll =
-                allTargetWords.some(
+                ALL_TARGET_WORDS.some(
                   (word) =>
                     cleanedMessage.includes(
                       word,
