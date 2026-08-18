@@ -324,6 +324,11 @@ function buildFamilyMemberContexts() {
 
         mentionName:
           member.mentionName,
+
+        aliases:
+          Array.isArray(member.aliases)
+            ? member.aliases
+            : [],
       };
     },
   );

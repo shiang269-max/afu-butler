@@ -43,6 +43,22 @@ export interface AiFamilyMemberContext {
   interaction?: string;
 
   mentionName?: string;
+
+  /**
+   * 日常主要稱呼。
+   *
+   * 這些是家庭最常使用的基本稱呼，
+   * AI 應優先用於人物辨認。
+   */
+  primaryNames?: string[];
+
+  /**
+   * 其他可理解稱呼。
+   *
+   * 用於理解暱稱、宮廷稱謂、
+   * 特殊稱呼與幽默稱呼。
+   */
+  aliases?: string[];
 }
 
 
@@ -420,8 +436,29 @@ ${safeText(context.speaker.personality) || '未設定'}
 互動方式：
 ${safeText(context.speaker.interaction) || '未設定'}
 
+日常主要稱呼：
+${
+  Array.isArray(context.speaker.primaryNames) &&
+  context.speaker.primaryNames.length > 0
+    ? context.speaker.primaryNames.join('、')
+    : '未設定'
+}
+
+其他可理解稱呼：
+${
+  Array.isArray(context.speaker.aliases) &&
+  context.speaker.aliases.length > 0
+    ? context.speaker.aliases.join('、')
+    : '未設定'
+}
+
 總管對此人的稱呼：
 ${safeText(context.speaker.mentionName) || '未設定'}
+
+注意：
+「日常主要稱呼」是最基本、最常用的人物辨認資料。
+「其他可理解稱呼」是同一人的額外別名與宮廷／特殊稱呼。
+不要把兩者當成不同人物。
 
 目前說話者就是正在發送本次訊息的人。
 `
@@ -456,6 +493,18 @@ ${context.familyMembers
   家庭地位：${safeText(member.authority) || '未設定'}
   個性：${safeText(member.personality) || '未設定'}
   互動方式：${safeText(member.interaction) || '未設定'}
+  日常主要稱呼：${
+    Array.isArray(member.primaryNames) &&
+    member.primaryNames.length > 0
+      ? member.primaryNames.join('、')
+      : '未設定'
+  }
+  其他可理解稱呼：${
+    Array.isArray(member.aliases) &&
+    member.aliases.length > 0
+      ? member.aliases.join('、')
+      : '未設定'
+  }
   總管稱呼：${safeText(member.mentionName) || '未設定'}
 `.trim();
     },
@@ -657,8 +706,17 @@ ${safeText(context.currentMessage)}
    後續相關問題應該使用該資訊。
 5. 不要因為某項資料沒有被寫入「家庭固定資料」，
    就忽略它在最近對話中的存在。
-6. 如果最近對話確實沒有相關資訊，再表示資訊不足。
-7. 不要否認最近對話中明確存在的資訊。
-8. 不要自行創造不存在的資訊。
+6. 家庭成員的「日常主要稱呼」是最優先的人物辨認資料。
+   例如「爸爸」、「媽媽」、「哥哥」、「辰」。
+7. 家庭成員的「其他可理解稱呼」是同一人的額外稱呼，
+   例如「主上」、「老佛爺」、「太子」、「辰王」。
+8. 如果使用者直接詢問某個家庭稱呼是誰，
+   優先從家庭成員的「日常主要稱呼」與「其他可理解稱呼」判斷。
+9. 不要因為某個稱呼不是 identity，
+   就回答「不知道」或把它視為陌生人物。
+10. 如果家庭資料與最近對話都沒有相關資訊，
+    再表示資訊不足。
+11. 不要否認最近對話中明確存在的資訊。
+12. 不要自行創造不存在的資訊。
 `.trim();
 }
