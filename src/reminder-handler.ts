@@ -2,6 +2,10 @@ import { GoogleGenAI } from '@google/genai';
 
 import {
   createReminder,
+  cancelReminder,
+  updateReminder,
+  loadReminders,
+  Reminder,
   ReminderTarget,
 } from './reminder';
 
@@ -10,404 +14,2479 @@ import {
 } from './family';
 
 import {
-  loadFamilyGroupId,
-} from './family-group-state';
+  setPendingReminderState,
+  getPendingReminderState,
+  clearPendingReminderState,
+} from './reminder-state';
 
-
-/**
+/*
  * =========================================================
- * Reminder Handler
+ * Reminder Handler 2.0
  * =========================================================
  *
- * 負責：
+ * 一次整合：
  *
- * 1. 判斷訊息是否可能是 Reminder
- * 2. 使用 Gemini 理解自然語言時間
- * 3. 取得提醒內容
- * 4. 取得提醒對象
- * 5. 建立 Reminder
+ * 1. 一則訊息建立多筆 Reminder
+ * 2. 一筆 Reminder 多個提醒對象
+ * 3. 每筆 Reminder 各自解析時間
+ * 4. 查詢：全部／今天／明天／這週／這個月
+ * 5. 查詢後可直接使用編號操作
+ * 6. 單筆取消／修改
+ * 7. 批次全部取消＋最後確認
+ * 8. 建立人／被提醒者取消權限
+ * 9. 重複 Reminder 偵測＋確認
+ * 10. 保留舊 createReminderFromMessage API
  *
  * 不負責：
- *
  * - LINE 發送
- * - Reminder 到期檢查
  * - Scheduler
- * - Gemini 一般聊天
+ * - Mention message object
  */
 
 
-/**
- * =========================================================
- * Reminder 解析結果
- * =========================================================
- */
+type ReminderAction =
+  | 'create'
+  | 'list'
+  | 'cancel'
+  | 'update';
+
+type QueryPeriod =
+  | 'all'
+  | 'today'
+  | 'tomorrow'
+  | 'week'
+  | 'month';
+
+type ReminderTargets = ReminderTarget[];
+
+interface ParsedCreateItem {
+  remindAt?: string;
+  remindAtEnd?: string;
+  content?: string;
+  targets?: Array<'self' | 'all' | string>;
+}
 
 interface ReminderParseResult {
-
-  isReminder: boolean;
-
+  action: ReminderAction | 'none';
   remindAt?: string;
-
+  remindAtEnd?: string;
   content?: string;
-
-  target:
-    | 'self'
-    | 'all'
-    | string
-    | null;
+  target: 'self' | 'all' | string | null;
+  targets?: Array<'self' | 'all' | string>;
+  reminders?: ParsedCreateItem[];
+  queryScope?: 'self' | 'group';
+  queryPeriod?: QueryPeriod;
+  updateRemindAt?: string;
+  updateContent?: string;
+  updateTarget: 'self' | 'all' | string | null;
+  cancelAll?: boolean;
 }
 
-
-/**
- * =========================================================
- * 判斷是否可能是 Reminder
- * =========================================================
- *
- * 先由 Node.js 做非常窄的初步判斷。
- *
- * 沒有「提醒」就不呼叫 Reminder Gemini。
- */
-
-export function mayBeReminder(
-  message: string,
-): boolean {
-
-  const text =
-    message.trim();
-
-  if (!text) {
-    return false;
-  }
-
-  return text.includes('提醒');
+export interface ReminderHandlerResult {
+  handled: boolean;
+  action?:
+    | ReminderAction
+    | 'duplicate-confirmation'
+    | 'selection-confirmation'
+    | 'authorization-confirmation';
+  created?: boolean;
+  cancelled?: boolean;
+  updated?: boolean;
+  reminderId?: string;
+  remindAt?: string;
+  content?: string;
+  target?: ReminderTarget;
+  reminders?: Reminder[];
+  candidates?: Reminder[];
+  message?: string;
 }
 
+/* =========================================================
+ * 初步判斷
+ * ========================================================= */
 
-/**
- * =========================================================
- * 建立 Reminder Parser Prompt
- * =========================================================
- */
+export function mayBeReminder(message: string): boolean {
+  const text = message.trim();
+  if (!text) return false;
+
+  const words = [
+    '提醒',
+    '提示',
+    '叫我',
+    '叫他',
+    '叫她',
+    '叫大家',
+    '通知我',
+    '通知大家',
+    '記得提醒',
+    '提醒一下',
+    '有哪些提醒',
+    '我的提醒',
+    '提醒呢',
+    '取消提醒',
+    '取消',
+    '撤掉提醒',
+    '不要再提醒',
+    '改成',
+    '修改提醒',
+    '延後提醒',
+    '幫我把',
+  ];
+
+  return words.some((word) => text.includes(word));
+}
+
+/* =========================================================
+ * Parser Prompt
+ * ========================================================= */
 
 function buildReminderPrompt(
   message: string,
   currentTime: string,
 ): string {
-
-  const members =
-    Object.entries(
-      FAMILY_MEMBERS,
-    ).map(
-      ([userId, member]) => ({
-        userId,
-        identity:
-          member.identity,
-        mentionName:
-          member.mentionName,
-        role:
-          member.role,
-      }),
-    );
-
+  const members = Object.entries(FAMILY_MEMBERS).map(
+    ([userId, member]) => ({
+      userId,
+      identity: member.identity,
+      mentionName: member.mentionName,
+      aliases: member.aliases,
+      role: member.role,
+    }),
+  );
 
   return `
-你是「LINE 第五個家人」的 Reminder 時間解析器。
+你是「LINE 第五個家人」的 Reminder 2.0 操作解析器。
 
-你的工作只有一件事：
+你不是一般聊天 AI。
+你只負責判斷使用者是否正在管理 Reminder，並輸出 JSON。
 
-判斷使用者是否真的要求建立提醒，
-如果是，將自然語言轉換成結構化資料。
-
-【目前時間】
-
+【目前台灣時間】
 ${currentTime}
 
 【家庭成員】
-
-${JSON.stringify(
-  members,
-  null,
-  2,
-)}
+${JSON.stringify(members, null, 2)}
 
 【使用者訊息】
-
 ${message}
 
-【規則】
+【action】
+create = 建立提醒
+list = 查詢提醒
+cancel = 取消提醒
+update = 修改提醒
+none = 不是 Reminder 操作
 
-1. 只有使用者真的要求「之後某個時間提醒某件事」時，isReminder 才是 true。
+【CREATE：多筆提醒】
+同一則訊息可以包含多道 Reminder。
+每一道都獨立解析時間、內容、對象。
 
-2. 如果只是聊天中提到「提醒」，
-   但沒有要求建立提醒，
-   isReminder 必須是 false。
-
-3. 「兩分鐘後」
-   必須依照目前時間計算實際時間。
-
-4. 「兩天後下午三點」
-   必須依照目前日期計算實際日期與 15:00。
-
-5. 「今天下午三點」
-   是今天 15:00。
-
-6. 「明天下午三點」
-   是明天 15:00。
-
-7. 如果使用者說「提醒我」，
-   target 使用 self。
-
-8. 如果使用者明確指定家庭成員，
-   target 使用該成員的 userId。
-
-9. 如果使用者說：
-   「提醒大家」
-   「提醒所有人」
-   「提醒全家人」
-   「提醒全員」
-   target 使用 all。
-
-10. content 只保留真正要提醒的事情。
-    例如：
-    「兩分鐘後提醒我喝水」
-    content 應該是：
-    「喝水」
-
-11. remindAt 必須輸出 ISO 8601 時間，
-    並使用台灣時間 UTC+08:00。
-
-12. 如果無法確定提醒時間，
-    isReminder 必須是 false。
-
-13. 如果無法確定提醒內容，
-    isReminder 必須是 false。
-
-14. 只輸出 JSON。
-    不要 Markdown。
-    不要解釋。
-    不要輸出其他文字。
-
-JSON 格式：
-
+例如：
+「下午三點提醒辰看牙醫，一小時後提醒我上廁所，晚上七點提醒辰倒垃圾」
+應輸出：
 {
-  "isReminder": true,
-  "remindAt": "2026-08-18T08:52:00+08:00",
-  "content": "喝水",
-  "target": "self"
+  "action":"create",
+  "reminders":[
+    {"remindAt":"...","content":"看牙醫","targets":["USER_ID_OF_CHEN"]},
+    {"remindAt":"...","content":"上廁所","targets":["self"]},
+    {"remindAt":"...","content":"倒垃圾","targets":["USER_ID_OF_CHEN"]}
+  ]
 }
 
-或：
+【CREATE：多個對象】
+「提醒我跟辰看牙醫」表示同一筆 Reminder 有兩個對象：
+"targets":["self","辰的userId"]
 
+「提醒大家」／「提醒所有人」／「提醒全家人」／「提醒全員」：
+"targets":["all"]
+
+只說「提醒我」：targets = ["self"]
+只說指定成員：targets = [該成員 userId]
+
+「我跟辰」、「我和辰」、「我、辰」都表示多個對象。
+
+【LIST】
+可以查：
+「我有哪些提醒」→ queryScope=self
+「大家有哪些提醒」→ queryScope=group
+「全部提醒」→ queryScope=group
+
+時間範圍：
+「今天」→ queryPeriod=today
+「明天」→ queryPeriod=tomorrow
+「這週」→ queryPeriod=week
+「這個月」→ queryPeriod=month
+沒有指定時間範圍 → queryPeriod=all
+
+【CANCEL】
+可以取消：
+「取消下午三點的提醒」
+「取消第4個」
+「幫我把4取消」
+「今天全部取消」
+「把今天所有提醒都取消」
+
+如果明確表示全部取消，cancelAll=true。
+如果只是指定某一道，cancelAll=false。
+
+【UPDATE】
+可以修改時間、內容、對象：
+「把下午三點的提醒改成四點」
+「把第4個改成10點」
+「幫我把4改成10點」
+「把喝水改成吃藥」
+
+如果修改時間，輸出 updateRemindAt。
+如果修改內容，輸出 updateContent。
+
+【時間】
+所有時間使用台灣 UTC+08:00。
+「兩分鐘後」依目前時間計算。
+「一小時後」依目前時間計算。
+「今天下午三點」= 今天15:00。
+「明天下午三點」= 明天15:00。
+「後天晚上八點」= 後天20:00。
+「下週一晚上八點」= 下一個星期一20:00。
+「8月25日晚上八點」= 實際日期20:00。
+
+【內容】
+只留下真正要提醒的事情。
+「下午三點提醒辰看牙醫」→ content=「看牙醫」
+不要把「提醒我」、「下午三點」放進 content。
+
+【重要】
+1. create 若有多筆，全部放進 reminders 陣列。
+2. 每筆都必須有明確時間與內容，否則該筆不要建立。
+3. 不要自行猜家庭成員。
+4. 指定成員時使用 userId。
+5. 無法確認是否為 Reminder 操作 → action=none。
+6. 只輸出 JSON，不要 Markdown，不要解釋。
+
+JSON 範例：
 {
-  "isReminder": false,
-  "target": null
+  "action":"create",
+  "reminders":[
+    {
+      "remindAt":"2026-08-18T15:00:00+08:00",
+      "content":"看牙醫",
+      "targets":["USER_ID"]
+    },
+    {
+      "remindAt":"2026-08-18T16:00:00+08:00",
+      "content":"上廁所",
+      "targets":["self"]
+    }
+  ],
+  "target":"self",
+  "updateTarget":null
 }
 `.trim();
 }
 
+/* =========================================================
+ * 台北目前時間
+ * ========================================================= */
 
-/**
- * =========================================================
- * 解析 Reminder
- * =========================================================
- */
+function getTaipeiCurrentTime(): string {
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date());
+}
+
+function getTaipeiDatePartsForReminder(date = new Date()): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const get = (type: string): number =>
+    Number(
+      parts.find((part) => part.type === type)?.value,
+    );
+
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+  };
+}
+
+function buildTaipeiReminderIso(
+  hour: number,
+  minute: number,
+  dayOffset: number,
+): string {
+  const today = getTaipeiDatePartsForReminder();
+  const utcMillis =
+    Date.UTC(
+      today.year,
+      today.month - 1,
+      today.day + dayOffset,
+      hour,
+      minute,
+    ) -
+    8 * 60 * 60 * 1000;
+
+  return new Date(utcMillis).toISOString();
+}
+
+function extractExplicitReminderTime(
+  message: string,
+): string | undefined {
+  const text = message.trim();
+
+  let dayOffset = 0;
+
+  if (text.includes('後天')) {
+    dayOffset = 2;
+  } else if (text.includes('明天')) {
+    dayOffset = 1;
+  }
+
+  const colonMatch = text.match(
+    /(?:上午|早上|下午|晚上|凌晨)?\s*(\d{1,2})[:：](\d{2})/,
+  );
+
+  let hour: number;
+  let minute: number;
+
+  if (colonMatch) {
+    hour = Number(colonMatch[1]);
+    minute = Number(colonMatch[2]);
+
+    const prefixMatch = text.match(
+      /(上午|早上|下午|晚上|凌晨)\s*\d{1,2}[:：]\d{2}/,
+    );
+
+    const prefix = prefixMatch?.[1];
+
+    if (prefix === '下午' || prefix === '晚上') {
+      if (hour < 12) hour += 12;
+    } else if (prefix === '凌晨' && hour === 12) {
+      hour = 0;
+    }
+  } else {
+    const pointMatch = text.match(
+      /(上午|早上|下午|晚上|凌晨)?\s*(\d{1,2})\s*點(?:[：:]?\s*(\d{1,2})\s*分?)?/,
+    );
+
+    if (!pointMatch) return undefined;
+
+    hour = Number(pointMatch[2]);
+    minute = pointMatch[3]
+      ? Number(pointMatch[3])
+      : 0;
+
+    const prefix = pointMatch[1];
+
+    if (prefix === '下午' || prefix === '晚上') {
+      if (hour < 12) hour += 12;
+    } else if (prefix === '凌晨' && hour === 12) {
+      hour = 0;
+    } else if (
+      !prefix &&
+      hour >= 1 &&
+      hour <= 7 &&
+      /晚上|晚間/.test(text)
+    ) {
+      hour += 12;
+    }
+  }
+
+  if (
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return undefined;
+  }
+
+  return buildTaipeiReminderIso(
+    hour,
+    minute,
+    dayOffset,
+  );
+}
+
+function applyReminderNaturalLanguageHints(
+  parsed: ReminderParseResult,
+  message: string,
+): ReminderParseResult {
+  const text = message.trim();
+  const explicitTime =
+    extractExplicitReminderTime(text);
+
+  let queryPeriod = parsed.queryPeriod || 'all';
+
+  if (text.includes('明天')) {
+    queryPeriod = 'tomorrow';
+  } else if (text.includes('今天')) {
+    queryPeriod = 'today';
+  } else if (
+    text.includes('這週') ||
+    text.includes('本週') ||
+    text.includes('這星期') ||
+    text.includes('本星期')
+  ) {
+    queryPeriod = 'week';
+  } else if (
+    text.includes('這個月') ||
+    text.includes('本月')
+  ) {
+    queryPeriod = 'month';
+  }
+
+  let action = parsed.action;
+
+  if (
+    action === 'none' &&
+    containsCancelIntent(text)
+  ) {
+    action = 'cancel';
+  } else if (
+    action === 'none' &&
+    containsUpdateIntent(text)
+  ) {
+    action = 'update';
+  } else if (
+    action === 'none' &&
+    (
+      text.includes('有哪些提醒') ||
+      text.includes('我的提醒') ||
+      text.includes('提醒呢')
+    )
+  ) {
+    action = 'list';
+  }
+
+  const hasNumberSelector =
+    /(?:第\s*)?(?:10|[1-9])(?:個|項|筆)?/.test(
+      text.replace(/\d{1,2}[:：]\d{2}/g, ''),
+    );
+
+  const hasExplicitAllWords =
+    /全部|所有|都|全撤|全取消/.test(text);
+
+  const contentProbe = text
+    .replace(/取消|撤掉|撤銷|不要|提醒|提示|幫我|幫忙|請|的|那個|那道|全部|所有|都/g, '')
+    .replace(/今天|明天|後天|這週|本週|這星期|本星期|這個月|本月/g, '')
+    .replace(/\d{1,2}[:：]\d{2}/g, '')
+    .replace(/(?:上午|早上|下午|晚上|凌晨)?\s*\d{1,2}\s*點(?:\s*\d{1,2}\s*分?)?/g, '')
+    .replace(/[第個項筆一二三四五六七八九十0-9]/g, '')
+    .trim();
+
+  const hasContentSelector =
+    /[\u4e00-\u9fffA-Za-z]/.test(contentProbe);
+
+  const cancelAll =
+    action === 'cancel' &&
+    (
+      parsed.cancelAll === true ||
+      hasExplicitAllWords ||
+      (
+        !explicitTime &&
+        !hasNumberSelector &&
+        !hasContentSelector &&
+        queryPeriod !== 'all' &&
+        /取消|撤掉|撤銷|不要/.test(text)
+      )
+    );
+
+  return {
+    ...parsed,
+    action,
+    remindAt:
+      explicitTime || parsed.remindAt,
+    queryPeriod,
+    cancelAll,
+  };
+}
+
+/* =========================================================
+ * Parser
+ * ========================================================= */
 
 async function parseReminder(
   message: string,
-  currentTime: string,
   gemini: GoogleGenAI,
 ): Promise<ReminderParseResult> {
+  const response = await gemini.models.generateContent({
+    model: 'gemini-3.5-flash-lite',
+    contents: buildReminderPrompt(
+      message,
+      getTaipeiCurrentTime(),
+    ),
+    config: { temperature: 0 },
+  });
 
-  const response =
-    await gemini.models.generateContent({
-      model:
-        'gemini-3.5-flash-lite',
-
-      contents:
-        buildReminderPrompt(
-          message,
-          currentTime,
-        ),
-
-      config: {
-        temperature: 0,
-      },
-    });
-
-
-  const text =
-    response.text?.trim();
-
-
+  const text = response.text?.trim();
   if (!text) {
-    return {
-      isReminder: false,
-      target: null,
-    };
+    return { action: 'none', target: null, updateTarget: null };
   }
 
-
   try {
+    const cleaned = text
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
 
-    const cleaned =
-      text
-        .replace(/^```json\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/\s*```$/i, '')
-        .trim();
-
-
-    const parsed =
-      JSON.parse(
-        cleaned,
-      ) as ReminderParseResult;
-
+    const parsed = JSON.parse(cleaned) as Partial<ReminderParseResult>;
+    const action = parsed.action;
 
     if (
-      parsed.isReminder !== true
+      action !== 'create' &&
+      action !== 'list' &&
+      action !== 'cancel' &&
+      action !== 'update'
     ) {
-
-      return {
-        isReminder: false,
-        target: null,
-      };
+      return { action: 'none', target: null, updateTarget: null };
     }
 
-
-    if (
-      typeof parsed.remindAt !== 'string' ||
-      !parsed.remindAt.trim()
-    ) {
-
-      return {
-        isReminder: false,
-        target: null,
-      };
-    }
-
-
-    if (
-      typeof parsed.content !== 'string' ||
-      !parsed.content.trim()
-    ) {
-
-      return {
-        isReminder: false,
-        target: null,
-      };
-    }
-
-
-    if (
-      parsed.target !== 'self' &&
-      parsed.target !== 'all' &&
-      typeof parsed.target !== 'string'
-    ) {
-
-      return {
-        isReminder: false,
-        target: null,
-      };
-    }
-
-
-    return {
-      isReminder: true,
-
-      remindAt:
-        parsed.remindAt.trim(),
-
-      content:
-        parsed.content.trim(),
-
-      target:
-        parsed.target,
+    const normalizeTarget = (
+      value: unknown,
+    ): 'self' | 'all' | string | null => {
+      if (
+        value === 'self' ||
+        value === 'all' ||
+        typeof value === 'string'
+      ) {
+        return value;
+      }
+      return null;
     };
 
-  } catch (error) {
+    const normalizedItems: ParsedCreateItem[] = Array.isArray(
+      parsed.reminders,
+    )
+      ? parsed.reminders.map((item) => ({
+          remindAt:
+            typeof item.remindAt === 'string'
+              ? item.remindAt.trim()
+              : undefined,
+          remindAtEnd:
+            typeof item.remindAtEnd === 'string'
+              ? item.remindAtEnd.trim()
+              : undefined,
+          content:
+            typeof item.content === 'string'
+              ? item.content.trim()
+              : undefined,
+          targets:
+            Array.isArray(item.targets)
+              ? item.targets.filter(
+                  (target): target is 'self' | 'all' | string =>
+                    target === 'self' ||
+                    target === 'all' ||
+                    typeof target === 'string',
+                )
+              : undefined,
+        }))
+      : [];
 
+    const result: ReminderParseResult = {
+      action,
+      remindAt:
+        typeof parsed.remindAt === 'string'
+          ? parsed.remindAt.trim()
+          : undefined,
+      remindAtEnd:
+        typeof parsed.remindAtEnd === 'string'
+          ? parsed.remindAtEnd.trim()
+          : undefined,
+      content:
+        typeof parsed.content === 'string'
+          ? parsed.content.trim()
+          : undefined,
+      target: normalizeTarget(parsed.target),
+      targets:
+        Array.isArray(parsed.targets)
+          ? parsed.targets.filter(
+              (target): target is 'self' | 'all' | string =>
+                target === 'self' ||
+                target === 'all' ||
+                typeof target === 'string',
+            )
+          : undefined,
+      reminders:
+        normalizedItems.length
+          ? normalizedItems
+          : undefined,
+      queryScope:
+        parsed.queryScope === 'group'
+          ? 'group'
+          : 'self',
+      queryPeriod:
+        parsed.queryPeriod === 'today' ||
+        parsed.queryPeriod === 'tomorrow' ||
+        parsed.queryPeriod === 'week' ||
+        parsed.queryPeriod === 'month'
+          ? parsed.queryPeriod
+          : 'all',
+      updateRemindAt:
+        typeof parsed.updateRemindAt === 'string'
+          ? parsed.updateRemindAt.trim()
+          : undefined,
+      updateContent:
+        typeof parsed.updateContent === 'string'
+          ? parsed.updateContent.trim()
+          : undefined,
+      updateTarget:
+        normalizeTarget(parsed.updateTarget),
+      cancelAll:
+        parsed.cancelAll === true,
+    };
+
+    return applyReminderNaturalLanguageHints(
+      result,
+      message,
+    );
+  } catch (error) {
     console.error(
       '[Reminder Handler] Reminder JSON 解析失敗:',
       error,
     );
 
     return {
-      isReminder: false,
+      action: 'none',
       target: null,
+      updateTarget: null,
     };
   }
 }
 
+/* =========================================================
+ * Reminder ID
+ * ========================================================= */
 
-/**
- * =========================================================
- * 解析目前時間
- * =========================================================
- */
+function createReminderId(): string {
+  return `reminder-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
 
-function getTaipeiCurrentTime(): string {
+/* =========================================================
+ * Target
+ * ========================================================= */
 
-  return new Intl.DateTimeFormat(
-    'zh-TW',
-    {
-      timeZone:
-        'Asia/Taipei',
+function resolveOneTarget(
+  target:
+    | 'self'
+    | 'all'
+    | string
+    | null
+    | undefined,
+  createdByUserId: string,
+): ReminderTarget | null {
+  if (target === 'all') {
+    return { type: 'all' };
+  }
 
-      year:
-        'numeric',
+  if (target === 'self' || !target) {
+    if (!createdByUserId) return null;
+    return {
+      type: 'user',
+      userId: createdByUserId,
+    };
+  }
 
-      month:
-        '2-digit',
+  if (!FAMILY_MEMBERS[target]) return null;
 
-      day:
-        '2-digit',
+  return {
+    type: 'user',
+    userId: target,
+  };
+}
 
-      weekday:
-        'long',
+function resolveTargets(
+  targets: Array<'self' | 'all' | string> | undefined,
+  fallbackTarget: 'self' | 'all' | string | null | undefined,
+  createdByUserId: string,
+): ReminderTargets | null {
+  const raw =
+    targets && targets.length
+      ? targets
+      : [fallbackTarget || 'self'];
 
-      hour:
-        '2-digit',
+  if (raw.includes('all')) {
+    return [{ type: 'all' }];
+  }
 
-      minute:
-        '2-digit',
+  const resolved: ReminderTargets = [];
 
-      second:
-        '2-digit',
+  for (const target of raw) {
+    const item = resolveOneTarget(
+      target,
+      createdByUserId,
+    );
 
-      hour12:
-        false,
-    },
-  ).format(
-    new Date(),
+    if (!item) return null;
+
+    if (
+      !resolved.some(
+        (existing) =>
+          existing.type === item.type &&
+          existing.type === 'user' &&
+          item.type === 'user' &&
+          existing.userId === item.userId,
+      )
+    ) {
+      resolved.push(item);
+    }
+  }
+
+  return resolved.length ? resolved : null;
+}
+
+function legacyTarget(
+  targets: ReminderTargets,
+): ReminderTarget {
+  return targets[0] || { type: 'all' };
+}
+
+function targetKey(targets: ReminderTargets): string {
+  return targets
+    .map((target) =>
+      target.type === 'all'
+        ? 'all'
+        : `user:${target.userId}`,
+    )
+    .sort()
+    .join('|');
+}
+
+function reminderTargets(reminder: Reminder): ReminderTargets {
+  const current =
+    (reminder as Reminder & {
+      targets?: ReminderTargets;
+    }).targets;
+
+  if (Array.isArray(current) && current.length) {
+    return current;
+  }
+
+  const legacy =
+    (reminder as Reminder & {
+      target?: ReminderTarget;
+    }).target;
+
+  if (legacy) return [legacy];
+
+  return [];
+}
+
+function targetContainsUser(
+  reminder: Reminder,
+  userId: string,
+): boolean {
+  const targets = reminderTargets(reminder);
+  return targets.some(
+    (target) =>
+      target.type === 'all' ||
+      (target.type === 'user' &&
+        target.userId === userId),
   );
 }
 
+function formatTargetList(
+  reminder: Reminder,
+): string {
+  const targets = reminderTargets(reminder);
 
-/**
- * =========================================================
- * 建立 Reminder
- * =========================================================
- */
+  if (!targets.length) return '未指定';
 
-export interface CreateReminderFromMessageResult {
+  if (targets.some((target) => target.type === 'all')) {
+    return '全家人';
+  }
 
-  created: boolean;
-
-  reminderId?: string;
-
-  remindAt?: string;
-
-  content?: string;
-
-  target?: ReminderTarget;
+  return targets
+    .map((target) => {
+      if (target.type !== 'user') return '全家人';
+      return (
+        FAMILY_MEMBERS[target.userId]?.identity ||
+        '指定成員'
+      );
+    })
+    .join('、');
 }
 
+/* =========================================================
+ * 時間格式
+ * ========================================================= */
 
-/**
- * =========================================================
- * 從自然語言建立 Reminder
- * =========================================================
- */
+function formatReminderTime(remindAt: string): string {
+  const date = new Date(remindAt);
+  if (Number.isNaN(date.getTime())) return remindAt;
+
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+/* =========================================================
+ * 查詢日期範圍
+ * ========================================================= */
+
+function taipeiDateParts(date = new Date()): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const get = (type: string): number =>
+    Number(parts.find((part) => part.type === type)?.value);
+
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+  };
+}
+
+function taipeiLocalDateToUtc(
+  year: number,
+  month: number,
+  day: number,
+): number {
+  return Date.UTC(year, month - 1, day) -
+    8 * 60 * 60 * 1000;
+}
+
+function getQueryRange(
+  period: QueryPeriod,
+): { start: number; end: number } | null {
+  if (period === 'all') return null;
+
+  const today = taipeiDateParts();
+  const startToday = taipeiLocalDateToUtc(
+    today.year,
+    today.month,
+    today.day,
+  );
+
+  if (period === 'today') {
+    return {
+      start: startToday,
+      end: startToday + 24 * 60 * 60 * 1000,
+    };
+  }
+
+  if (period === 'tomorrow') {
+    return {
+      start: startToday + 24 * 60 * 60 * 1000,
+      end: startToday + 2 * 24 * 60 * 60 * 1000,
+    };
+  }
+
+  if (period === 'month') {
+    const nextMonth =
+      today.month === 12
+        ? { year: today.year + 1, month: 1 }
+        : { year: today.year, month: today.month + 1 };
+
+    return {
+      start: startToday -
+        (today.day - 1) * 24 * 60 * 60 * 1000,
+      end: taipeiLocalDateToUtc(
+        nextMonth.year,
+        nextMonth.month,
+        1,
+      ),
+    };
+  }
+
+  const currentDate = new Date(startToday);
+  const weekday = currentDate.getUTCDay();
+  const mondayOffset = weekday === 0 ? 6 : weekday - 1;
+  const start =
+    startToday - mondayOffset * 24 * 60 * 60 * 1000;
+
+  return {
+    start,
+    end: start + 7 * 24 * 60 * 60 * 1000,
+  };
+}
+
+/* =========================================================
+ * 取得有效 Reminder
+ * ========================================================= */
+
+function getActiveReminders(
+  groupId: string,
+): Reminder[] {
+  return loadReminders().filter(
+    (reminder) =>
+      reminder.groupId === groupId &&
+      !reminder.completed &&
+      !Boolean(
+        (reminder as Reminder & {
+          cancelled?: boolean;
+        }).cancelled,
+      ),
+  );
+}
+
+/* =========================================================
+ * 查詢
+ * ========================================================= */
+
+function getQueryReminders(
+  groupId: string,
+  userId: string,
+  scope: 'self' | 'group',
+  period: QueryPeriod,
+): Reminder[] {
+  let reminders = getActiveReminders(groupId);
+
+  if (scope === 'self') {
+    reminders = reminders.filter(
+      (reminder) =>
+        reminder.createdByUserId === userId ||
+        targetContainsUser(reminder, userId),
+    );
+  }
+
+  const range = getQueryRange(period);
+  if (range) {
+    reminders = reminders.filter((reminder) => {
+      const time = new Date(reminder.remindAt).getTime();
+      return (
+        !Number.isNaN(time) &&
+        time >= range.start &&
+        time < range.end
+      );
+    });
+  }
+
+  return reminders.sort(
+    (a, b) =>
+      new Date(a.remindAt).getTime() -
+      new Date(b.remindAt).getTime(),
+  );
+}
+
+/* =========================================================
+ * 候選過濾
+ * ========================================================= */
+
+function filterCandidates(
+  reminders: Reminder[],
+  parsed: ReminderParseResult,
+): Reminder[] {
+  return reminders.filter((reminder) => {
+    if (parsed.content) {
+      if (
+        !reminder.content
+          .toLowerCase()
+          .includes(parsed.content.toLowerCase())
+      ) {
+        return false;
+      }
+    }
+
+    if (parsed.remindAt) {
+      const targetTime =
+        new Date(parsed.remindAt).getTime();
+      const reminderTime =
+        new Date(reminder.remindAt).getTime();
+
+      if (
+        !Number.isNaN(targetTime) &&
+        !Number.isNaN(reminderTime) &&
+        Math.abs(reminderTime - targetTime) >
+          60 * 1000
+      ) {
+        return false;
+      }
+    }
+
+    if (
+      parsed.target &&
+      parsed.target !== 'self' &&
+      parsed.target !== 'all'
+    ) {
+      if (!targetContainsUser(reminder, parsed.target)) {
+        return false;
+      }
+    }
+
+    if (parsed.target === 'all') {
+      if (
+        !reminderTargets(reminder).some(
+          (target) => target.type === 'all',
+        )
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+/* =========================================================
+ * 重複偵測
+ * ========================================================= */
+
+function findDuplicateReminder(
+  groupId: string,
+  createdByUserId: string,
+  content: string,
+  remindAt: string,
+  targets: ReminderTargets,
+): Reminder | null {
+  const targetTime = new Date(remindAt).getTime();
+  if (Number.isNaN(targetTime)) return null;
+
+  const wantedTargets = targetKey(targets);
+
+  return (
+    getActiveReminders(groupId).find((reminder) => {
+      if (reminder.createdByUserId !== createdByUserId) {
+        return false;
+      }
+
+      const reminderTime =
+        new Date(reminder.remindAt).getTime();
+
+      if (Number.isNaN(reminderTime)) return false;
+
+      if (
+        Math.abs(reminderTime - targetTime) >
+        60 * 1000
+      ) {
+        return false;
+      }
+
+      if (
+        reminder.content.trim().toLowerCase() !==
+        content.trim().toLowerCase()
+      ) {
+        return false;
+      }
+
+      return (
+        targetKey(reminderTargets(reminder)) ===
+        wantedTargets
+      );
+    }) || null
+  );
+}
+
+/* =========================================================
+ * 建立單筆 Reminder
+ * ========================================================= */
+
+function createOneReminder(
+  item: ParsedCreateItem,
+  fallbackTarget: 'self' | 'all' | string | null,
+  createdByUserId: string,
+  groupId: string,
+): { reminder?: Reminder; duplicate?: boolean; error?: string } {
+  if (!item.remindAt || !item.content) {
+    return {
+      error: '缺少提醒時間或提醒內容',
+    };
+  }
+
+  const remindTime = new Date(item.remindAt).getTime();
+  if (Number.isNaN(remindTime)) {
+    return { error: '提醒時間無法解析' };
+  }
+
+  if (remindTime <= Date.now()) {
+    return { error: '提醒時間已經過去' };
+  }
+
+  const targets = resolveTargets(
+    item.targets,
+    fallbackTarget,
+    createdByUserId,
+  );
+
+  if (!targets) {
+    return { error: '無法確認提醒對象' };
+  }
+
+  const duplicate = findDuplicateReminder(
+    groupId,
+    createdByUserId,
+    item.content,
+    item.remindAt,
+    targets,
+  );
+
+  if (duplicate) {
+    return {
+      reminder: duplicate,
+      duplicate: true,
+    };
+  }
+
+  const reminder = createReminder({
+    id: createReminderId(),
+    groupId,
+    createdByUserId,
+    content: item.content,
+    remindAt: item.remindAt,
+    target: legacyTarget(targets),
+    targets,
+    completed: false,
+    cancelled: false,
+  });
+
+  return { reminder };
+}
+
+/* =========================================================
+ * 建立 Reminder
+ * ========================================================= */
+
+async function handleCreate(
+  parsed: ReminderParseResult,
+  createdByUserId: string,
+  groupId: string,
+): Promise<ReminderHandlerResult> {
+  const items =
+    parsed.reminders?.length
+      ? parsed.reminders
+      : [
+          {
+            remindAt: parsed.remindAt,
+            remindAtEnd: parsed.remindAtEnd,
+            content: parsed.content,
+            targets: parsed.targets,
+          },
+        ];
+
+  const created: Reminder[] = [];
+  const duplicates: Reminder[] = [];
+  const errors: string[] = [];
+
+  for (const item of items) {
+    const result = createOneReminder(
+      item,
+      parsed.target,
+      createdByUserId,
+      groupId,
+    );
+
+    if (result.error) {
+      errors.push(result.error);
+      continue;
+    }
+
+    if (!result.reminder) continue;
+
+    if (result.duplicate) {
+      duplicates.push(result.reminder);
+      continue;
+    }
+
+    created.push(result.reminder);
+  }
+
+  /*
+   * createOneReminder 以「回傳既有 Reminder」表示重複。
+   * 若整批中只有重複，要求使用者確認是否再建立。
+   */
+  if (duplicates.length) {
+    const conversationKey =
+      `${groupId}:${createdByUserId}`;
+
+    setPendingReminderState({
+      conversationKey,
+      userId: createdByUserId,
+      groupId,
+      action: 'duplicate',
+      candidateReminderIds:
+        duplicates.map((reminder) => reminder.id),
+      requiresConfirmation: true,
+      confirmationRequired: true,
+    });
+
+    let message =
+      duplicates.length === 1
+        ? `主上，奴才好像已經收到一道${formatReminderTime(duplicates[0].remindAt)}的「${duplicates[0].content}」旨意了，這次還要再提醒一次嗎？`
+        : `主上，奴才發現有 ${duplicates.length} 道可能重複的旨意：\n`;
+
+    if (duplicates.length > 1) {
+      message += duplicates
+        .map(
+          (reminder, index) =>
+            `${index + 1}. ${formatReminderTime(reminder.remindAt)}｜${reminder.content}｜${formatTargetList(reminder)}`,
+        )
+        .join('\n');
+      message += '\n要再建立這些提醒嗎？';
+    }
+
+    if (created.length) {
+      message =
+        `喳，其他 ${created.length} 道提醒已先記下。\n${message}`;
+    }
+
+    return {
+      handled: true,
+      action: 'duplicate-confirmation',
+      created: created.length > 0,
+      reminders: created,
+      candidates: duplicates,
+      message,
+    };
+  }
+
+  if (!created.length) {
+    return {
+      handled: true,
+      action: 'create',
+      created: false,
+      message:
+        errors.length
+          ? `主上，奴才沒有成功建立提醒：${errors[0]}。`
+          : '主上，奴才還缺少提醒時間或提醒內容。',
+    };
+  }
+
+  const first = created[0];
+  const message =
+    created.length === 1
+      ? `已記下。奴才會在約 ${formatReminderTime(first.remindAt)} 提醒您：${first.content}`
+      : `喳，已替主上記下 ${created.length} 道提醒：\n${created
+          .map(
+            (reminder, index) =>
+              `${index + 1}. ${formatReminderTime(reminder.remindAt)}｜${reminder.content}｜${formatTargetList(reminder)}`,
+          )
+          .join('\n')}`;
+
+  return {
+    handled: true,
+    action: 'create',
+    created: true,
+    reminderId: first.id,
+    remindAt: first.remindAt,
+    content: first.content,
+    target: first.target,
+    reminders: created,
+    message,
+  };
+}
+
+/* =========================================================
+ * 建立重複 Reminder
+ * ========================================================= */
+
+function createDuplicateAfterConfirmation(
+  candidate: Reminder,
+  createdByUserId: string,
+  groupId: string,
+): ReminderHandlerResult {
+  const targets = reminderTargets(candidate);
+
+  const reminder = createReminder({
+    id: createReminderId(),
+    groupId,
+    createdByUserId,
+    content: candidate.content,
+    remindAt: candidate.remindAt,
+    target: legacyTarget(targets),
+    targets,
+    completed: false,
+    cancelled: false,
+  });
+
+  return {
+    handled: true,
+    action: 'create',
+    created: true,
+    reminderId: reminder.id,
+    remindAt: reminder.remindAt,
+    content: reminder.content,
+    target: reminder.target,
+    reminders: [reminder],
+    message:
+      `喳，已再替主上添下一道相同的提醒：${formatReminderTime(reminder.remindAt)}｜${reminder.content}。`,
+  };
+}
+
+/* =========================================================
+ * 確認詞
+ * ========================================================= */
+
+function isYes(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return [
+    '是',
+    '好',
+    '可以',
+    '要',
+    '要啊',
+    '再提醒',
+    '再一次',
+    '對',
+    '嗯',
+    '嗯嗯',
+    '好啊',
+    '可以啊',
+    '確定',
+    '同意',
+    'yes',
+    'y',
+  ].some(
+    (word) =>
+      normalized === word ||
+      normalized.includes(word),
+  );
+}
+
+function isNo(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return [
+    '不用',
+    '不要',
+    '取消',
+    '算了',
+    '不用了',
+    '不用提醒',
+    '不需要',
+    '否',
+    'no',
+    'n',
+  ].some(
+    (word) =>
+      normalized === word ||
+      normalized.includes(word),
+  );
+}
+
+/* =========================================================
+ * 候選選擇
+ * ========================================================= */
+
+function extractCandidateIndices(
+  text: string,
+  candidates: Reminder[],
+): number[] {
+  const normalized = text.trim();
+  const indices = new Set<number>();
+
+  const numberMap: Record<string, number> = {
+    '第一個': 0, '第一': 0, '1': 0, '一': 0,
+    '第二個': 1, '第二': 1, '2': 1, '二': 1,
+    '第三個': 2, '第三': 2, '3': 2, '三': 2,
+    '第四個': 3, '第四': 3, '4': 3, '四': 3,
+    '第五個': 4, '第五': 4, '5': 4, '五': 4,
+    '第六個': 5, '第六': 5, '6': 5, '六': 5,
+    '第七個': 6, '第七': 6, '7': 6, '七': 6,
+    '第八個': 7, '第八': 7, '8': 7, '八': 7,
+    '第九個': 8, '第九': 8, '9': 8, '九': 8,
+    '第十個': 9, '第十': 9, '10': 9, '十': 9,
+  };
+
+  for (const [word, index] of Object.entries(numberMap)) {
+    if (
+      normalized.includes(word) &&
+      index < candidates.length
+    ) {
+      indices.add(index);
+    }
+  }
+
+  const withoutTimes = normalized
+    .replace(/\d{1,2}[:：]\d{2}/g, ' ')
+    .replace(/(?:上午|早上|下午|晚上|凌晨)?\s*\d{1,2}\s*點(?:\s*\d{1,2}\s*分?)?/g, ' ');
+
+  const arabicMatches = withoutTimes.match(/(?<!\d)(10|[1-9])(?!\d)/g) || [];
+
+  for (const value of arabicMatches) {
+    const number = Number(value);
+    if (number >= 1 && number <= candidates.length) {
+      indices.add(number - 1);
+    }
+  }
+
+  /* 「取消56」代表第 5、6 個；10 則保留為第 10 個。 */
+  const compactMatch = withoutTimes.match(/(?<!\d)([1-9][1-9])(?!\d)/);
+  if (compactMatch) {
+    const digits = compactMatch[1];
+    if (digits !== '10') {
+      for (const digit of digits) {
+        const number = Number(digit);
+        if (
+          number >= 1 &&
+          number <= candidates.length
+        ) {
+          indices.add(number - 1);
+        }
+      }
+    }
+  }
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (
+      candidate &&
+      candidate.content &&
+      normalized.includes(candidate.content)
+    ) {
+      indices.add(index);
+    }
+  }
+
+  const explicitTime =
+    extractExplicitReminderTime(normalized);
+
+  if (explicitTime) {
+    const targetTime = new Date(explicitTime).getTime();
+    if (!Number.isNaN(targetTime)) {
+      for (let index = 0; index < candidates.length; index += 1) {
+        const reminderTime =
+          new Date(candidates[index].remindAt).getTime();
+        if (
+          !Number.isNaN(reminderTime) &&
+          Math.abs(reminderTime - targetTime) <= 60 * 1000
+        ) {
+          indices.add(index);
+        }
+      }
+    }
+  }
+
+  return [...indices].sort((a, b) => a - b);
+}
+
+function resolveCandidateIndex(
+  text: string,
+  candidates: Reminder[],
+): number {
+  return extractCandidateIndices(
+    text,
+    candidates,
+  )[0] ?? -1;
+}
+
+function containsUpdateIntent(text: string): boolean {
+  return [
+    '改成',
+    '改為',
+    '修改',
+    '改一下',
+    '換成',
+    '變成',
+  ].some((word) => text.includes(word));
+}
+
+function containsCancelIntent(text: string): boolean {
+  return [
+    '取消',
+    '撤掉',
+    '撤銷',
+    '不要',
+  ].some((word) => text.includes(word));
+}
+
+/* =========================================================
+ * Pending 權限
+ * ========================================================= */
+
+function canManageReminder(
+  reminder: Reminder,
+  userId: string,
+): boolean {
+  return (
+    reminder.createdByUserId === userId ||
+    targetContainsUser(reminder, userId)
+  );
+}
+
+function authorizedUsers(
+  reminder: Reminder,
+): string[] {
+  const users = [reminder.createdByUserId];
+
+  for (const target of reminderTargets(reminder)) {
+    if (target.type === 'user') {
+      if (!users.includes(target.userId)) {
+        users.push(target.userId);
+      }
+    }
+  }
+
+  return users;
+}
+
+function authorizationText(
+  candidates: Reminder[],
+): string {
+  const userIds = new Set<string>();
+
+  for (const reminder of candidates) {
+    for (const userId of authorizedUsers(reminder)) {
+      userIds.add(userId);
+    }
+  }
+
+  const names = [...userIds].map(
+    (userId) =>
+      FAMILY_MEMBERS[userId]?.identity ||
+      '指定成員',
+  );
+
+  return names.join('、');
+}
+
+function setAuthorizationPendingStates(
+  candidates: Reminder[],
+  groupId: string,
+  action: 'cancel' | 'update',
+): void {
+  const userIds = new Set<string>();
+
+  for (const reminder of candidates) {
+    for (const userId of authorizedUsers(reminder)) {
+      userIds.add(userId);
+    }
+  }
+
+  for (const userId of userIds) {
+    setPendingReminderState({
+      conversationKey: `${groupId}:${userId}`,
+      userId,
+      groupId,
+      action,
+      candidateReminderIds: candidates.map(
+        (reminder) => reminder.id,
+      ),
+      requiresConfirmation: true,
+      confirmationRequired: true,
+    });
+  }
+}
+
+/* =========================================================
+ * Pending Confirmation
+ * ========================================================= */
+
+async function handlePendingState(
+  message: string,
+  createdByUserId: string,
+  groupId: string,
+  gemini: GoogleGenAI,
+): Promise<ReminderHandlerResult | null> {
+  const conversationKey =
+    `${groupId}:${createdByUserId}`;
+
+  const pending = getPendingReminderState(
+    conversationKey,
+  );
+
+  if (!pending) return null;
+
+  const activeReminders =
+    getActiveReminders(groupId);
+
+  let candidates = pending.candidateReminderIds
+    .map((reminderId) =>
+      activeReminders.find(
+        (reminder) => reminder.id === reminderId,
+      ),
+    )
+    .filter(
+      (reminder): reminder is Reminder =>
+        reminder !== undefined,
+    );
+
+  if (!candidates.length) {
+    clearPendingReminderState(conversationKey);
+    return {
+      handled: true,
+      message:
+        '主上，原本那道 Reminder 已經不存在或已經完成了。奴才不敢擅自動其他旨意。',
+    };
+  }
+
+  const cancelIntent = containsCancelIntent(message);
+  const updateIntent = containsUpdateIntent(message);
+
+  /*
+   * Pending 查詢結果只在使用者真的要操作它時才攔截。
+   * 例如「取消14:19」要從上一輪候選中找；
+   * 「取消明天提醒」沒有明確選擇時則交回新指令解析。
+   */
+  if (cancelIntent || updateIntent) {
+    const selectedIndices =
+      extractCandidateIndices(
+        message,
+        candidates,
+      );
+
+    if (selectedIndices.length) {
+      candidates = selectedIndices.map(
+        (index) => candidates[index],
+      );
+    } else if (pending.requiresConfirmation) {
+      if (isYes(message) || isNo(message)) {
+        /* 交由下方確認流程處理。 */
+      } else {
+        return null;
+      }
+    } else {
+      return null;
+    }
+
+    if (cancelIntent && selectedIndices.length) {
+      const unauthorized = candidates.filter(
+        (reminder) =>
+          !canManageReminder(
+            reminder,
+            createdByUserId,
+          ),
+      );
+
+      if (unauthorized.length) {
+        clearPendingReminderState(conversationKey);
+        setAuthorizationPendingStates(
+          unauthorized,
+          groupId,
+          'cancel',
+        );
+        return {
+          handled: true,
+          action: 'authorization-confirmation',
+          candidates: unauthorized,
+          message:
+            `主上，這些提醒需要建立人或被提醒的人確認取消。請由「${authorizationText(unauthorized)}」其中一人回覆「同意」。`,
+        };
+      }
+
+      let count = 0;
+      for (const reminder of candidates) {
+        if (cancelReminder(reminder.id)) count += 1;
+      }
+
+      clearPendingReminderState(conversationKey);
+
+      return {
+        handled: true,
+        action: 'cancel',
+        cancelled: count === candidates.length,
+        candidates,
+        reminderId:
+          candidates.length === 1
+            ? candidates[0].id
+            : undefined,
+        message:
+          candidates.length === 1
+            ? `喳，${formatReminderTime(candidates[0].remindAt)} 的「${candidates[0].content}」提醒已替主上撤下。`
+            : `喳，已替主上撤下 ${count} 道提醒。`,
+      };
+    }
+
+    if (updateIntent && selectedIndices.length) {
+      const selected = candidates[0];
+      const parsedUpdate = await parseReminder(
+        message,
+        gemini,
+      );
+
+      if (!canManageReminder(selected, createdByUserId)) {
+        clearPendingReminderState(conversationKey);
+        setAuthorizationPendingStates(
+          [selected],
+          groupId,
+          'update',
+        );
+        return {
+          handled: true,
+          action: 'authorization-confirmation',
+          candidates: [selected],
+          message:
+            `主上，這道提醒需要建立人或被提醒的人確認修改。請由「${authorizationText([selected])}」其中一人回覆「同意」。`,
+        };
+      }
+
+      const newTarget = parsedUpdate.updateTarget
+        ? resolveOneTarget(
+            parsedUpdate.updateTarget,
+            createdByUserId,
+          ) ?? undefined
+        : undefined;
+
+      const updated = updateReminder(
+        selected.id,
+        {
+          remindAt:
+            parsedUpdate.updateRemindAt ||
+            extractExplicitReminderTime(message),
+          content: parsedUpdate.updateContent,
+          target: newTarget,
+          targets: newTarget
+            ? [newTarget]
+            : undefined,
+        },
+      );
+
+      if (updated) {
+        clearPendingReminderState(conversationKey);
+        return {
+          handled: true,
+          action: 'update',
+          updated: true,
+          reminderId: updated.id,
+          remindAt: updated.remindAt,
+          content: updated.content,
+          target: updated.target,
+          message:
+            `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
+        };
+      }
+
+      return {
+        handled: true,
+        action: 'update',
+        updated: false,
+        candidates: [selected],
+        message:
+          '主上，奴才知道您要改哪一道了，但還沒聽清楚要改成什麼時間或內容。',
+      };
+    }
+  }
+
+  /* 重複建立確認 */
+  if (pending.action === 'duplicate') {
+    if (isYes(message)) {
+      clearPendingReminderState(conversationKey);
+
+      const created = candidates.map((candidate) =>
+        createDuplicateAfterConfirmation(
+          candidate,
+          createdByUserId,
+          groupId,
+        ),
+      );
+
+      const reminders = created
+        .map((result) => result.reminders?.[0])
+        .filter(
+          (reminder): reminder is Reminder =>
+            reminder !== undefined,
+        );
+
+      return {
+        handled: true,
+        action: 'create',
+        created: reminders.length > 0,
+        reminders,
+        reminderId: reminders[0]?.id,
+        remindAt: reminders[0]?.remindAt,
+        content: reminders[0]?.content,
+        target: reminders[0]?.target,
+        message:
+          reminders.length === 1
+            ? `喳，已再替主上添下一道相同的提醒：${formatReminderTime(reminders[0].remindAt)}｜${reminders[0].content}。`
+            : `喳，已再替主上添下 ${reminders.length} 道相同的提醒。`,
+      };
+    }
+
+    if (isNo(message)) {
+      clearPendingReminderState(conversationKey);
+      return {
+        handled: true,
+        action: 'duplicate-confirmation',
+        message: '喳，那奴才不重複下旨。',
+      };
+    }
+
+    return {
+      handled: true,
+      action: 'duplicate-confirmation',
+      candidates,
+      message:
+        '主上只要告訴奴才「要」或「不要」即可。',
+    };
+  }
+
+  /* 批次取消確認 */
+  if (
+    pending.action === 'cancel' &&
+    pending.requiresConfirmation
+  ) {
+    if (isYes(message)) {
+      const unauthorized = candidates.filter(
+        (reminder) =>
+          !canManageReminder(
+            reminder,
+            createdByUserId,
+          ),
+      );
+
+      if (unauthorized.length) {
+        clearPendingReminderState(conversationKey);
+        setAuthorizationPendingStates(
+          unauthorized,
+          groupId,
+          'cancel',
+        );
+        return {
+          handled: true,
+          action: 'authorization-confirmation',
+          candidates: unauthorized,
+          message:
+            `主上，這批提醒中有部分需要建立人或被提醒的人同意取消。請由「${authorizationText(unauthorized)}」其中一人回覆「同意」。`,
+        };
+      }
+
+      let count = 0;
+      for (const reminder of candidates) {
+        if (cancelReminder(reminder.id)) count += 1;
+      }
+
+      clearPendingReminderState(conversationKey);
+
+      return {
+        handled: true,
+        action: 'cancel',
+        cancelled: count === candidates.length,
+        candidates,
+        message:
+          `喳，已替主上撤下 ${count} 道提醒。`,
+      };
+    }
+
+    if (isNo(message)) {
+      clearPendingReminderState(conversationKey);
+      return {
+        handled: true,
+        action: 'cancel',
+        cancelled: false,
+        message: '喳，奴才保留原本的提醒，沒有撤下。',
+      };
+    }
+  }
+
+  /* 多候選選擇 */
+  const selectedIndices = extractCandidateIndices(
+    message,
+    candidates,
+  );
+
+  if (selectedIndices.length > 1) {
+    if (pending.action === 'cancel') {
+      const selected = selectedIndices.map(
+        (index) => candidates[index],
+      );
+      const unauthorized = selected.filter(
+        (reminder) =>
+          !canManageReminder(
+            reminder,
+            createdByUserId,
+          ),
+      );
+
+      if (unauthorized.length) {
+        clearPendingReminderState(conversationKey);
+        setAuthorizationPendingStates(
+          unauthorized,
+          groupId,
+          'cancel',
+        );
+        return {
+          handled: true,
+          action: 'authorization-confirmation',
+          candidates: unauthorized,
+          message:
+            `主上，這些提醒需要建立人或被提醒的人確認取消。請由「${authorizationText(unauthorized)}」其中一人回覆「同意」。`,
+        };
+      }
+
+      let count = 0;
+      for (const reminder of selected) {
+        if (cancelReminder(reminder.id)) count += 1;
+      }
+
+      clearPendingReminderState(conversationKey);
+      return {
+        handled: true,
+        action: 'cancel',
+        cancelled: count === selected.length,
+        candidates: selected,
+        message:
+          `喳，已替主上撤下 ${count} 道提醒。`,
+      };
+    }
+
+    return {
+      handled: true,
+      action: 'selection-confirmation',
+      candidates,
+      message:
+        '主上，修改一次只能指定一道 Reminder。請告訴奴才其中一個編號。',
+    };
+  }
+
+  const index =
+    selectedIndices[0] ??
+    -1;
+
+  if (index < 0) {
+    return {
+      handled: true,
+      action: 'selection-confirmation',
+      candidates,
+      message:
+        '主上，奴才還沒聽清楚您要處理哪一道。請直接說「第一個」、「第二個」，或說提醒內容。',
+    };
+  }
+
+  const selected = candidates[index];
+
+  if (!canManageReminder(selected, createdByUserId)) {
+    clearPendingReminderState(conversationKey);
+    setAuthorizationPendingStates(
+      [selected],
+      groupId,
+      pending.action === 'cancel' ? 'cancel' : 'update',
+    );
+    return {
+      handled: true,
+      action: 'authorization-confirmation',
+      candidates: [selected],
+      message:
+        `主上，這道提醒需要建立人或被提醒的人確認。可由「${authorizationText([selected])}」其中一人回覆「同意」。`,
+    };
+  }
+
+  if (pending.action === 'cancel') {
+    const success = cancelReminder(selected.id);
+    clearPendingReminderState(conversationKey);
+
+    return {
+      handled: true,
+      action: 'cancel',
+      cancelled: success,
+      reminderId: selected.id,
+      message:
+        success
+          ? `喳，${formatReminderTime(selected.remindAt)} 的「${selected.content}」提醒已替主上撤下。`
+          : '主上，奴才沒有成功撤下那道提醒。',
+    };
+  }
+
+  clearPendingReminderState(conversationKey);
+
+  return {
+    handled: true,
+    action: 'update',
+    candidates: [selected],
+    message:
+      '主上，奴才已經找到您說的那一道。請把要改成的時間或內容告訴奴才。',
+  };
+}
+
+/* =========================================================
+ * List
+ * ========================================================= */
+
+function handleList(
+  parsed: ReminderParseResult,
+  createdByUserId: string,
+  groupId: string,
+): ReminderHandlerResult {
+  const reminders = getQueryReminders(
+    groupId,
+    createdByUserId,
+    parsed.queryScope || 'self',
+    parsed.queryPeriod || 'all',
+  );
+
+  if (!reminders.length) {
+    return {
+      handled: true,
+      action: 'list',
+      reminders: [],
+      message:
+        '目前沒有符合條件的有效 Reminder。',
+    };
+  }
+
+  const periodText: Record<QueryPeriod, string> = {
+    all: '目前',
+    today: '今日',
+    tomorrow: '明日',
+    week: '本週',
+    month: '本月',
+  };
+
+  const conversationKey =
+    `${groupId}:${createdByUserId}`;
+
+  /*
+   * 查詢結果本身就是下一輪操作的候選清單。
+   * action 先使用 cancel 作為相容值，真正下一句若包含
+   * 「改成／修改」會在 Pending Handler 中切換成 update。
+   */
+  setPendingReminderState({
+    conversationKey,
+    userId: createdByUserId,
+    groupId,
+    action: 'cancel',
+    candidateReminderIds: reminders.map(
+      (reminder) => reminder.id,
+    ),
+    requiresConfirmation: false,
+    confirmationRequired: false,
+  });
+
+  const lines = reminders.map(
+    (reminder, index) =>
+      `${index + 1}. ${formatReminderTime(reminder.remindAt)}｜@${formatTargetList(reminder)}｜${reminder.content}`,
+  );
+
+  return {
+    handled: true,
+    action: 'list',
+    reminders,
+    message:
+      `喳，主上${periodText[parsed.queryPeriod || 'all']}共有 ${reminders.length} 道提醒：\n${lines.join('\n')}\n\n之後可以直接說「4取消」或「4改成10點」處理其中一道。`,
+  };
+}
+
+/* =========================================================
+ * Cancel
+ * ========================================================= */
+
+function handleCancel(
+  parsed: ReminderParseResult,
+  createdByUserId: string,
+  groupId: string,
+): ReminderHandlerResult {
+  let reminders = getQueryReminders(
+    groupId,
+    createdByUserId,
+    'group',
+    parsed.queryPeriod || 'all',
+  );
+
+  reminders = filterCandidates(
+    reminders,
+    parsed,
+  );
+
+  if (parsed.cancelAll) {
+    if (!reminders.length) {
+      return {
+        handled: true,
+        action: 'cancel',
+        cancelled: false,
+        message:
+          '主上，目前沒有符合條件的有效 Reminder。',
+      };
+    }
+
+    const conversationKey =
+      `${groupId}:${createdByUserId}`;
+
+    setPendingReminderState({
+      conversationKey,
+      userId: createdByUserId,
+      groupId,
+      action: 'cancel',
+      candidateReminderIds:
+        reminders.map((reminder) => reminder.id),
+      requiresConfirmation: true,
+      confirmationRequired: true,
+    });
+
+    const lines = reminders.map(
+      (reminder, index) =>
+        `${index + 1}. ${formatReminderTime(reminder.remindAt)}｜@${formatTargetList(reminder)}｜${reminder.content}`,
+    );
+
+    const periodText: Record<QueryPeriod, string> = {
+      all: '目前',
+      today: '今日',
+      tomorrow: '明日',
+      week: '本週',
+      month: '本月',
+    };
+
+    return {
+      handled: true,
+      action: 'selection-confirmation',
+      candidates: reminders,
+      message:
+        `主上，${periodText[parsed.queryPeriod || 'all']}共有 ${reminders.length} 道提醒：\n${lines.join('\n')}\n\n確定全部撤掉嗎？`,
+    };
+  }
+
+  if (!reminders.length) {
+    return {
+      handled: true,
+      action: 'cancel',
+      cancelled: false,
+      message:
+        '主上，奴才沒有找到符合條件的有效 Reminder。',
+    };
+  }
+
+  if (reminders.length === 1) {
+    const reminder = reminders[0];
+
+    if (!canManageReminder(reminder, createdByUserId)) {
+      setAuthorizationPendingStates(
+        [reminder],
+        groupId,
+        'cancel',
+      );
+
+      return {
+        handled: true,
+        action: 'authorization-confirmation',
+        candidates: [reminder],
+        message:
+          `主上，這道提醒是「${formatTargetList(reminder)}」的事項，建立人與被提醒的人都可以確認取消。請由「${authorizationText([reminder])}」其中一人回覆「同意」。`,
+      };
+    }
+
+    const success = cancelReminder(reminder.id);
+
+    return {
+      handled: true,
+      action: 'cancel',
+      cancelled: success,
+      reminderId: reminder.id,
+      message:
+        success
+          ? `喳，${formatReminderTime(reminder.remindAt)} 的「${reminder.content}」提醒已替主上撤下。`
+          : '主上，奴才沒有成功撤下那道提醒。',
+    };
+  }
+
+  const conversationKey =
+    `${groupId}:${createdByUserId}`;
+
+  setPendingReminderState({
+    conversationKey,
+    userId: createdByUserId,
+    groupId,
+    action: 'cancel',
+    candidateReminderIds:
+      reminders.map((reminder) => reminder.id),
+    requiresConfirmation: false,
+    confirmationRequired: false,
+  });
+
+  const candidateText = reminders
+    .map(
+      (reminder, index) =>
+        `${index + 1}. ${formatReminderTime(reminder.remindAt)}｜@${formatTargetList(reminder)}｜${reminder.content}`,
+    )
+    .join('\n');
+
+  return {
+    handled: true,
+    action: 'selection-confirmation',
+    candidates: reminders,
+    message:
+      `主上，奴才找到 ${reminders.length} 道符合的旨意：\n${candidateText}\n請告訴奴才要撤哪一道；若要多道一起撤，直接說「4跟6」即可。`,
+  };
+}
+
+/* =========================================================
+ * Update
+ * ========================================================= */
+
+function handleUpdate(
+  parsed: ReminderParseResult,
+  createdByUserId: string,
+  groupId: string,
+): ReminderHandlerResult {
+  let reminders = getQueryReminders(
+    groupId,
+    createdByUserId,
+    'group',
+    parsed.queryPeriod || 'all',
+  );
+
+  reminders = filterCandidates(
+    reminders,
+    parsed,
+  );
+
+  if (!reminders.length) {
+    return {
+      handled: true,
+      action: 'update',
+      updated: false,
+      message:
+        '主上，奴才沒有找到符合條件的有效 Reminder。',
+    };
+  }
+
+  if (reminders.length > 1) {
+    const conversationKey =
+      `${groupId}:${createdByUserId}`;
+
+    setPendingReminderState({
+      conversationKey,
+      userId: createdByUserId,
+      groupId,
+      action: 'update',
+      candidateReminderIds:
+        reminders.map((reminder) => reminder.id),
+      requiresConfirmation: false,
+      confirmationRequired: false,
+    });
+
+    const candidateText = reminders
+      .map(
+        (reminder, index) =>
+          `${index + 1}. ${formatReminderTime(reminder.remindAt)}｜@${formatTargetList(reminder)}｜${reminder.content}`,
+      )
+      .join('\n');
+
+    return {
+      handled: true,
+      action: 'selection-confirmation',
+      candidates: reminders,
+      message:
+        `主上，奴才找到不只一道符合的旨意：\n${candidateText}\n請告訴奴才要修改哪一道。`,
+    };
+  }
+
+  const reminder = reminders[0];
+
+  if (!canManageReminder(reminder, createdByUserId)) {
+    const conversationKey =
+      `${groupId}:${createdByUserId}`;
+
+    setAuthorizationPendingStates(
+      [reminder],
+      groupId,
+      'update',
+    );
+
+    return {
+      handled: true,
+      action: 'authorization-confirmation',
+      candidates: [reminder],
+      message:
+        `主上，這道提醒需要建立人或被提醒的人確認修改。請由「${authorizationText([reminder])}」其中一人回覆「同意」。`,
+    };
+  }
+
+  const newTarget = parsed.updateTarget
+    ? (resolveOneTarget(
+        parsed.updateTarget,
+        createdByUserId,
+      ) ?? undefined)
+    : undefined;
+
+  const updated = updateReminder(reminder.id, {
+    remindAt: parsed.updateRemindAt,
+    content: parsed.updateContent,
+    target: newTarget,
+    targets: newTarget
+      ? [newTarget]
+      : undefined,
+  });
+
+  if (!updated) {
+    return {
+      handled: true,
+      action: 'update',
+      updated: false,
+      message:
+        '主上，奴才沒有成功修改那道提醒。',
+    };
+  }
+
+  return {
+    handled: true,
+    action: 'update',
+    updated: true,
+    reminderId: updated.id,
+    remindAt: updated.remindAt,
+    content: updated.content,
+    target: updated.target,
+    message:
+      `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
+  };
+}
+
+/* =========================================================
+ * 主要入口
+ * ========================================================= */
+
+export async function handleReminderMessage(
+  message: string,
+  createdByUserId: string,
+  groupId: string,
+  gemini: GoogleGenAI,
+): Promise<ReminderHandlerResult> {
+  if (
+    !message.trim() ||
+    !createdByUserId ||
+    !groupId
+  ) {
+    return { handled: false };
+  }
+
+  /*
+   * Pending State 優先，但只有真正像「回覆上一個操作」時才攔截。
+   * 這讓「4取消」、「4跟6」、「取消14:19」可以直接使用上一輪候選，
+   * 同時保留「取消明天提醒」這種全新指令的自然語言解析。
+   */
+  const pending = getPendingReminderState(
+    `${groupId}:${createdByUserId}`,
+  );
+
+  if (pending) {
+    const normalized = message.trim();
+    const looksLikePendingResponse =
+      containsCancelIntent(normalized) ||
+      containsUpdateIntent(normalized) ||
+      isYes(normalized) ||
+      isNo(normalized) ||
+      extractCandidateIndices(
+        normalized,
+        pending.candidateReminderIds
+          .map((id) =>
+            getActiveReminders(groupId).find(
+              (reminder) => reminder.id === id,
+            ),
+          )
+          .filter(
+            (reminder): reminder is Reminder =>
+              reminder !== undefined,
+          ),
+      ).length > 0;
+
+    const isExplicitNewBatchCancel =
+      containsCancelIntent(normalized) &&
+      (
+        normalized.includes('全部') ||
+        normalized.includes('所有') ||
+        normalized.includes('明天') ||
+        normalized.includes('今天') ||
+        normalized.includes('這週') ||
+        normalized.includes('本週') ||
+        normalized.includes('這個月') ||
+        normalized.includes('本月')
+      ) &&
+      extractCandidateIndices(
+        normalized,
+        [],
+      ).length === 0 &&
+      !extractExplicitReminderTime(normalized);
+
+    if (
+      looksLikePendingResponse &&
+      !isExplicitNewBatchCancel
+    ) {
+      const pendingResult = await handlePendingState(
+        message,
+        createdByUserId,
+        groupId,
+        gemini,
+      );
+
+      if (pendingResult) return pendingResult;
+    }
+  }
+
+  const hasReminderIntent = mayBeReminder(message);
+
+  if (hasReminderIntent) {
+    let parsed = await parseReminder(
+      message,
+      gemini,
+    );
+
+    parsed = applyReminderNaturalLanguageHints(
+      parsed,
+      message,
+    );
+
+    if (parsed.action !== 'none') {
+      /* 新指令取代舊 Pending State。 */
+      clearPendingReminderState(
+        `${groupId}:${createdByUserId}`,
+      );
+
+      switch (parsed.action) {
+        case 'create':
+          return handleCreate(
+            parsed,
+            createdByUserId,
+            groupId,
+          );
+
+        case 'list':
+          return handleList(
+            parsed,
+            createdByUserId,
+            groupId,
+          );
+
+        case 'cancel':
+          return handleCancel(
+            parsed,
+            createdByUserId,
+            groupId,
+          );
+
+        case 'update':
+          return handleUpdate(
+            parsed,
+            createdByUserId,
+            groupId,
+          );
+
+        default:
+          return { handled: false };
+      }
+    }
+  }
+
+  return { handled: false };
+}
+
+/* =========================================================
+ * 舊 API 相容
+ * ========================================================= */
+
+export interface CreateReminderFromMessageResult {
+  created: boolean;
+  reminderId?: string;
+  remindAt?: string;
+  content?: string;
+  target?: ReminderTarget;
+}
 
 export async function createReminderFromMessage(
   message: string,
@@ -415,146 +2494,22 @@ export async function createReminderFromMessage(
   groupId: string,
   gemini: GoogleGenAI,
 ): Promise<CreateReminderFromMessageResult> {
-
-  if (
-    !mayBeReminder(
-      message,
-    )
-  ) {
-
-    return {
-      created: false,
-    };
-  }
-
-
-  if (!createdByUserId) {
-
-    return {
-      created: false,
-    };
-  }
-
-
-  if (!groupId) {
-
-    return {
-      created: false,
-    };
-  }
-
-
-  const parsed =
-    await parseReminder(
-      message,
-      getTaipeiCurrentTime(),
-      gemini,
-    );
-
-
-  if (
-    !parsed.isReminder ||
-    !parsed.remindAt ||
-    !parsed.content
-  ) {
-
-    return {
-      created: false,
-    };
-  }
-
-
-  let target:
-    | ReminderTarget
-    | null = null;
-
-
-  if (
-    parsed.target === 'all'
-  ) {
-
-    target = {
-      type: 'all',
-    };
-
-  } else if (
-    parsed.target === 'self'
-  ) {
-
-    target = {
-      type: 'user',
-      userId:
-        createdByUserId,
-    };
-
-  } else {
-
-    const member =
-      FAMILY_MEMBERS[
-        parsed.target || ''
-      ];
-
-
-    if (!member) {
-
-      return {
-        created: false,
-      };
-    }
-
-
-    target = {
-      type: 'user',
-      userId:
-        parsed.target || '',
-    };
-  }
-
-
-  const reminderId =
-    `reminder-${Date.now()}`;
-
-
-  const reminder =
-    createReminder({
-      id:
-        reminderId,
-
-      groupId,
-
-      createdByUserId,
-
-      content:
-        parsed.content,
-
-      remindAt:
-        parsed.remindAt,
-
-      target,
-
-      completed:
-        false,
-    });
-
-
-  console.log(
-    '[Reminder Handler] 已建立自然語言 Reminder:',
-    reminder.id,
+  const result = await handleReminderMessage(
+    message,
+    createdByUserId,
+    groupId,
+    gemini,
   );
 
+  if (result.created) {
+    return {
+      created: true,
+      reminderId: result.reminderId,
+      remindAt: result.remindAt,
+      content: result.content,
+      target: result.target,
+    };
+  }
 
-  return {
-    created: true,
-
-    reminderId:
-      reminder.id,
-
-    remindAt:
-      reminder.remindAt,
-
-    content:
-      reminder.content,
-
-    target,
-  };
+  return { created: false };
 }

@@ -774,7 +774,7 @@ async function handleSilence(
  * =========================================================
  */
 
-export async function checkReminders(
+async function checkReminders(
   lineClient:
     messagingApi.MessagingApiClient,
 ): Promise<void> {
