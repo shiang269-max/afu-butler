@@ -8,6 +8,14 @@ import { FAMILY_MEMBERS } from './family';
 import { resolveFamilyTarget } from './family-resolver';
 
 import {
+  createReminderFromMessage,
+} from './reminder-handler';
+
+import {
+  loadFamilyGroupId,
+} from './family-group-state';
+
+import {
   startProactiveScheduler,
   recordFamilyGroupMessage,
 } from './proactive-scheduler';
@@ -645,7 +653,131 @@ app.post(
             const shouldResolveTarget =
               hasTrigger ||
               hasTargetIntent;
+/*
+ * =====================================================
+ * Reminder
+ * =====================================================
+ *
+ * Reminder 是獨立功能。
+ *
+ * 只有訊息看起來可能是提醒時，
+ * 才交給 reminder-handler。
+ *
+ * 成功建立後：
+ *
+ * 1. 直接回覆使用者
+ * 2. 寫入記憶
+ * 3. 不再進一般 AI Core
+ *
+ * 私訊：
+ * → 使用已保存的家庭群組 ID
+ *
+ * 群組：
+ * → 使用目前群組 ID
+ * =====================================================
+ */
 
+if (
+  userMessage.includes('提醒')
+) {
+
+  try {
+
+    const reminderGroupId =
+      event.source.type === 'group'
+        ? event.source.groupId
+        : loadFamilyGroupId();
+
+
+    if (reminderGroupId) {
+
+      const reminderResult =
+        await createReminderFromMessage(
+          cleanTriggerWords(
+            userMessage,
+          ),
+          event.source.userId || '',
+          reminderGroupId,
+          gemini,
+        );
+
+
+      if (
+        reminderResult.created
+      ) {
+
+        const remindAtText =
+          reminderResult.remindAt
+            ? new Intl.DateTimeFormat(
+                'zh-TW',
+                {
+                  timeZone:
+                    'Asia/Taipei',
+
+                  hour:
+                    '2-digit',
+
+                  minute:
+                    '2-digit',
+
+                  hour12:
+                    false,
+                },
+              ).format(
+                new Date(
+                  reminderResult.remindAt,
+                ),
+              )
+            : '指定時間';
+
+
+        const reminderReply =
+          `已記下。奴才會在約 ${remindAtText} 提醒您：${reminderResult.content}`;
+
+
+        await lineClient.replyMessage(
+          {
+            replyToken:
+              event.replyToken,
+
+            messages: [
+              {
+                type: 'text',
+
+                text:
+                  reminderReply,
+              },
+            ],
+          },
+        );
+
+
+        addToMemory(
+          conversationKey,
+          'user',
+          userMessage,
+        );
+
+
+        addToMemory(
+          conversationKey,
+          'assistant',
+          reminderReply,
+        );
+
+
+        return;
+      }
+    }
+
+  } catch (error) {
+
+    logError(
+      'Reminder 建立失敗',
+      error,
+    );
+  }
+}
 
             /*
              * =====================================================

@@ -12,6 +12,8 @@
  * AI Core：
  * - 接收完整 Context
  * - 建立 AI 指令
+ * - 判斷是否需要即時資訊
+ * - 必要時使用 Google Search
  * - 呼叫 Gemini
  * - 回傳最終回答
  *
@@ -98,6 +100,184 @@ export interface AiCoreInput {
 
 /**
  * =========================================================
+ * 判斷是否可能需要即時資訊
+ * =========================================================
+ *
+ * 不要每一則訊息都開 Google Search。
+ *
+ * 只有明顯涉及：
+ * - 現在 / 今天 / 最近
+ * - 新聞 / 最新消息
+ * - 天氣
+ * - 價格
+ * - 營業時間
+ * - 地點 / 餐廳 / 附近
+ * - 網路查詢
+ * - 即時資料
+ *
+ * 才把 Google Search 工具交給 Gemini。
+ *
+ * 最終是否真的使用 Search，
+ * 仍由 Gemini 自己判斷。
+ * =========================================================
+ */
+
+function mayNeedGoogleSearch(
+  message: string,
+): boolean {
+
+  const text =
+    message
+      .trim()
+      .toLowerCase();
+
+
+  if (!text) {
+    return false;
+  }
+
+
+  const realtimePatterns = [
+    /現在/,
+    /目前/,
+    /今天/,
+    /今日/,
+    /今晚/,
+    /明天/,
+    /昨天/,
+    /最近/,
+    /最新/,
+    /即時/,
+    /新聞/,
+    /消息/,
+    /發生什麼/,
+    /發生甚麼/,
+    /天氣/,
+    /下雨/,
+    /溫度/,
+    /氣溫/,
+    /價格/,
+    /多少錢/,
+    /股價/,
+    /匯率/,
+    /營業時間/,
+    /幾點開/,
+    /幾點關/,
+    /有沒有開/,
+    /地址/,
+    /在哪裡/,
+    /在哪/,
+    /附近/,
+    /餐廳/,
+    /咖啡/,
+    /商店/,
+    /店家/,
+    /推薦/,
+    /搜尋/,
+    /查一下/,
+    /查查看/,
+    /幫我查/,
+    /網路上/,
+    /網路/,
+    /google/,
+    /where/,
+    /nearby/,
+    /restaurant/,
+    /weather/,
+    /latest/,
+    /news/,
+    /price/,
+    /open now/,
+  ];
+
+
+  return realtimePatterns.some(
+    (pattern) =>
+      pattern.test(text),
+  );
+}
+
+
+/**
+ * =========================================================
+ * 建立搜尋工具
+ * =========================================================
+ */
+
+function buildGoogleSearchTools(
+  currentMessage: string,
+): Array<Record<string, unknown>> {
+
+  return [];
+}
+
+
+/**
+ * =========================================================
+ * 建立目前時間
+ * =========================================================
+ *
+ * 如果 index / Context 已經提供時間，
+ * 優先使用 Context。
+ *
+ * 如果沒有，
+ * AI Core 自己補上台灣目前時間，
+ * 避免模型自行猜測。
+ * =========================================================
+ */
+
+function getEffectiveCurrentTime(
+  context: AiContext,
+): string {
+
+  if (
+    context.currentTime &&
+    context.currentTime.trim()
+  ) {
+    return context.currentTime.trim();
+  }
+
+
+  const now =
+    new Date();
+
+
+  return new Intl.DateTimeFormat(
+    'zh-TW',
+    {
+      timeZone:
+        'Asia/Taipei',
+
+      year:
+        'numeric',
+
+      month:
+        '2-digit',
+
+      day:
+        '2-digit',
+
+      weekday:
+        'long',
+
+      hour:
+        '2-digit',
+
+      minute:
+        '2-digit',
+
+      second:
+        '2-digit',
+
+      hour12:
+        false,
+    },
+  ).format(now);
+}
+
+
+/**
+ * =========================================================
  * 建立總管核心身份
  * =========================================================
  */
@@ -147,6 +327,8 @@ function buildAiCoreInstruction(): string {
 - 最近談過什麼
 - 本次訊息是在延續哪個話題
 - 使用者目前真正想問什麼
+- 家庭目前已知的位置
+- 目前時間
 
 不要只看目前最後一句。
 
@@ -206,7 +388,87 @@ function buildAiCoreInstruction(): string {
 如果確實無法判斷，
 再詢問。
 
-【六、不要編造】
+【六、時間理解】
+
+Context 中的「目前時間」是由程式提供的實際時間。
+
+如果使用者詢問：
+
+- 現在幾點
+- 現在是什麼時間
+- 今天星期幾
+- 現在是幾月幾號
+
+優先使用 Context 提供的目前時間。
+
+不要自己猜測時間。
+
+如果 Context 沒有時間，
+才坦白說明無法取得實際時間。
+
+【七、位置理解】
+
+Context 中的「家庭位置」是程式提供的已知位置資料。
+
+如果 Context 有：
+
+- 名稱
+- 城市
+- 行政區
+- 地址
+- 緯度
+- 經度
+
+可以自然使用。
+
+例如使用者問：
+
+「我們家在哪？」
+「現在這個家庭位置在哪？」
+「我們家附近有什麼？」
+
+可以根據 Context 中已知位置回答。
+
+不要自行猜測不存在的精確位置。
+
+「家庭固定位置」與「使用者當下實際 GPS 位置」是不同概念。
+
+如果沒有提供使用者當下 GPS，
+不要假裝知道使用者現在站在哪裡。
+
+【八、即時資訊與 Google Search】
+
+當問題涉及：
+
+- 最新消息
+- 今天的資訊
+- 最近發生的事情
+- 新聞
+- 即時天氣
+- 即時價格
+- 營業時間
+- 地址
+- 餐廳
+- 附近店家
+- 網路上查詢
+- 其他明顯需要最新資料的問題
+
+如果 Google Search 工具可用，
+可以使用它取得即時資訊。
+
+不要因為可以使用 Search，
+就每個問題都搜尋。
+
+一般知識問題不需要搜尋。
+
+如果使用 Search，
+必須根據實際取得的資料回答，
+不要假裝搜尋到不存在的內容。
+
+如果搜尋結果不足，
+坦白說明。
+
+【九、不要編造】
 
 不要假裝：
 
@@ -215,11 +477,13 @@ function buildAiCoreInstruction(): string {
 - 已經搜尋不存在的資料
 - 已經執行不存在的工具
 - 已經取得不存在的資訊
+- 已經知道不存在的位置
+- 已經知道不存在的即時狀態
 
 如果沒有真的執行，
 就不要說已經執行。
 
-【七、家庭資料不是答案】
+【十、家庭資料不是答案】
 
 不要把 Context 裡的家庭設定整段念給使用者。
 
@@ -227,7 +491,7 @@ function buildAiCoreInstruction(): string {
 
 應該自然地使用它們。
 
-【八、不要過度解釋自己的身份】
+【十一、不要過度解釋自己的身份】
 
 不要在正常回答中說：
 
@@ -241,7 +505,7 @@ function buildAiCoreInstruction(): string {
 
 你應該像真正生活在這個 LINE 家庭裡的總管。
 
-【九、回答目前問題】
+【十二、回答目前問題】
 
 不要自行增加與使用者問題無關的功能。
 
@@ -281,8 +545,58 @@ export async function runAiCore(
 
   const contextPrompt =
     buildAiContextPrompt(
-      context,
+      {
+        ...context,
+
+        currentTime:
+          getEffectiveCurrentTime(
+            context,
+          ),
+      },
     );
+
+
+  /*
+   * =======================================================
+   * 判斷是否需要 Google Search
+   * =======================================================
+   */
+
+  const googleSearchTools =
+    buildGoogleSearchTools(
+      context.currentMessage,
+    );
+
+
+  /*
+   * =======================================================
+   * 建立工具說明
+   * =======================================================
+   */
+
+  const toolInstruction =
+    googleSearchTools.length > 0
+      ? `
+【即時資訊工具】
+
+目前這則訊息可能需要即時或外部資訊。
+
+如果問題確實需要最新資料，
+可以使用 Google Search。
+
+如果不需要，
+就直接正常回答。
+
+不要為了一般知識或普通聊天而搜尋。
+`.trim()
+      : `
+【即時資訊工具】
+
+目前沒有必要使用即時搜尋。
+
+一般知識、推理、聊天與上下文問題，
+直接使用你的正常 AI 能力回答。
+`.trim();
 
 
   /*
@@ -302,6 +616,9 @@ ${contextPrompt}
 ${buildAiCoreInstruction()}
 
 
+${toolInstruction}
+
+
 【最終處理要求】
 
 請先完整理解：
@@ -309,8 +626,10 @@ ${buildAiCoreInstruction()}
 1. 目前說話者
 2. 家庭關係
 3. 最近對話
-4. 本次訊息
-5. 使用者真正想表達的意思
+4. 家庭已知位置
+5. 目前時間
+6. 本次訊息
+7. 使用者真正想表達的意思
 
 再回答。
 
@@ -334,6 +653,15 @@ ${buildAiCoreInstruction()}
 如果問題需要根據前文理解，
 使用前文。
 
+如果問題詢問目前時間，
+使用程式提供的目前時間。
+
+如果問題詢問家庭位置，
+使用 Context 中已知的位置。
+
+如果問題需要最新或即時資訊，
+在 Google Search 可用時使用它。
+
 如果資訊不足，
 才詢問必要的補充資訊。
 
@@ -352,6 +680,9 @@ ${buildAiCoreInstruction()}
    * =======================================================
    */
 
+  console.log(
+  '[AI Core Debug] 開始呼叫 Gemini',
+);
   const response =
     await gemini.models.generateContent(
       {
@@ -363,10 +694,19 @@ ${buildAiCoreInstruction()}
         config: {
           systemInstruction:
             SYSTEM_INSTRUCTION,
+
+          ...(googleSearchTools.length > 0
+            ? {
+                tools:
+                  googleSearchTools,
+              }
+            : {}),
         },
       },
     );
-
+console.log(
+  '[AI Core Debug] Gemini 已返回',
+);
 
   /*
    * =======================================================

@@ -5,6 +5,11 @@ import {
   saveFamilyGroupId,
 } from './family-group-state';
 
+import {
+  getDueReminders,
+  completeReminder,
+} from './reminder';
+
 
 /*
  * =========================================================
@@ -765,6 +770,120 @@ async function handleSilence(
 
 /*
  * =========================================================
+ * Reminder
+ * =========================================================
+ */
+
+export async function checkReminders(
+  lineClient:
+    messagingApi.MessagingApiClient,
+): Promise<void> {
+
+  const dueReminders =
+    getDueReminders();
+
+
+  for (
+    const reminder
+    of dueReminders
+  ) {
+
+    try {
+
+      if (
+        reminder.target.type === 'all'
+      ) {
+
+        await lineClient.pushMessage(
+          {
+            to:
+              reminder.groupId,
+
+            messages: [
+              {
+                type:
+                  'textV2',
+
+                text:
+                  `{target} ${reminder.content}`,
+
+                substitution: {
+                  target: {
+                    type:
+                      'mention',
+
+                    mentionee: {
+                      type:
+                        'all',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        );
+
+      } else {
+
+        await lineClient.pushMessage(
+          {
+            to:
+              reminder.groupId,
+
+            messages: [
+              {
+                type:
+                  'textV2',
+
+                text:
+                  `{target} ${reminder.content}`,
+
+                substitution: {
+                  target: {
+                    type:
+                      'mention',
+
+                    mentionee: {
+                      type:
+                        'user',
+
+                      userId:
+                        reminder.target.userId,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        );
+      }
+
+
+      completeReminder(
+        reminder.id,
+      );
+
+
+      console.log(
+        '[Reminder] 已發送 Reminder:',
+        reminder.id,
+      );
+
+    } catch (error) {
+
+      console.error(
+        '[Reminder] 發送 Reminder 失敗:',
+        reminder.id,
+
+        error,
+      );
+    }
+  }
+}
+
+
+/*
+ * =========================================================
  * 檢查單一群組
  * =========================================================
  */
@@ -919,6 +1038,21 @@ export function startProactiveScheduler(
 
   const checkAllGroups =
     async (): Promise<void> => {
+
+      try {
+
+        await checkReminders(
+          lineClient,
+        );
+
+      } catch (error) {
+
+        console.error(
+          '[Reminder] Reminder 檢查失敗:',
+          error,
+        );
+      }
+
 
       for (
         const groupId

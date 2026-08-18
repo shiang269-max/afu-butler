@@ -1,4 +1,4 @@
-const MAX_MEMORY_MESSAGES = 12;
+const MAX_MEMORY_MESSAGES = 18;
 
 export type MemoryMessage = {
   role: 'user' | 'assistant';
