@@ -927,6 +927,17 @@ function saveReminders(
 }
 
 
+function verifyReminderPersisted(
+  reminderId: string,
+): Reminder | null {
+  return (
+    loadReminders().find(
+      (reminder) =>
+        reminder.id === reminderId,
+    ) || null
+  );
+}
+
 /*
  * =========================================================
  * 正規化建立用 Reminder
@@ -1047,14 +1058,23 @@ export function createReminder(
     reminders,
   );
 
+  const persisted =
+    verifyReminderPersisted(
+      normalizedReminder.id,
+    );
+
+  if (!persisted) {
+    throw new Error(
+      `Reminder 建立後驗證失敗: ${normalizedReminder.id}`,
+    );
+  }
 
   console.log(
     '[Reminder] 已建立 Reminder:',
     normalizedReminder.id,
   );
 
-
-  return normalizedReminder;
+  return persisted;
 }
 
 
@@ -1537,14 +1557,25 @@ export function updateReminder(
     reminders,
   );
 
+  const persisted =
+    verifyReminderPersisted(
+      reminderId,
+    );
+
+  if (!persisted) {
+    console.error(
+      '[Reminder] Reminder 修改後驗證失敗:',
+      reminderId,
+    );
+    return null;
+  }
 
   console.log(
     '[Reminder] Reminder 已修改:',
     reminderId,
   );
 
-
-  return reminder;
+  return persisted;
 }
 
 
@@ -1622,12 +1653,26 @@ export function cancelReminder(
     reminders,
   );
 
+  const persisted =
+    verifyReminderPersisted(
+      reminderId,
+    );
+
+  if (
+    !persisted ||
+    persisted.cancelled !== true
+  ) {
+    console.error(
+      '[Reminder] Reminder 取消後驗證失敗:',
+      reminderId,
+    );
+    return false;
+  }
 
   console.log(
     '[Reminder] Reminder 已取消:',
     reminderId,
   );
-
 
   return true;
 }
@@ -1779,12 +1824,26 @@ export function completeReminder(
     reminders,
   );
 
+  const persisted =
+    verifyReminderPersisted(
+      reminderId,
+    );
+
+  if (
+    !persisted ||
+    persisted.completed !== true
+  ) {
+    console.error(
+      '[Reminder] Reminder 完成狀態保存失敗:',
+      reminderId,
+    );
+    return false;
+  }
 
   console.log(
     '[Reminder] Reminder 已完成:',
     reminderId,
   );
-
 
   return true;
 }

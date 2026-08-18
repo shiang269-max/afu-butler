@@ -8,14 +8,6 @@ import { FAMILY_MEMBERS } from './family';
 import { resolveFamilyTarget } from './family-resolver';
 
 import {
-  handleReminderMessage,
-} from './reminder-handler';
-
-import {
-  loadFamilyGroupId,
-} from './family-group-state';
-
-import {
   startProactiveScheduler,
   recordFamilyGroupMessage,
 } from './proactive-scheduler';
@@ -324,11 +316,6 @@ function buildFamilyMemberContexts() {
 
         mentionName:
           member.mentionName,
-
-        aliases:
-          Array.isArray(member.aliases)
-            ? member.aliases
-            : [],
       };
     },
   );
@@ -658,93 +645,7 @@ app.post(
             const shouldResolveTarget =
               hasTrigger ||
               hasTargetIntent;
-/*
- * =====================================================
- * Reminder
- * =====================================================
- *
- * Reminder Handler 自己負責：
- *
- * - 新建立
- * - 查詢
- * - 修改
- * - 取消
- * - Pending confirmation
- *
- * index.ts 只負責：
- *
- * 1. 把訊息交給 Handler
- * 2. 將 Handler 的結果送回 LINE
- * 3. 執行真正的 Mention
- *
- * 注意：
- * 不再用「訊息是否包含提醒」作為唯一入口。
- * 「1取消」、「取消1」、「同意」等 Pending 操作
- * 本身可能沒有「提醒」兩字，也必須能進 Handler。
- * =====================================================
- */
 
-try {
-  const reminderGroupId =
-    event.source.type === 'group'
-      ? event.source.groupId
-      : loadFamilyGroupId();
-
-  if (reminderGroupId) {
-    const reminderResult =
-      await handleReminderMessage(
-        cleanTriggerWords(
-          userMessage,
-        ),
-        event.source.userId || '',
-        reminderGroupId,
-        gemini,
-      );
-
-    if (reminderResult.handled) {
-      const reminderReply =
-        reminderResult.message ||
-        (
-          reminderResult.created
-            ? '已記下，奴才會依旨提醒。'
-            : '喳，奴才已處理這道 Reminder。'
-        );
-
-      await sendReminderReply(
-        event.replyToken,
-        reminderReply,
-        reminderResult.mentionUserIds,
-        reminderResult.mentionAll === true,
-      );
-
-      addToMemory(
-        conversationKey,
-        'user',
-        userMessage,
-      );
-
-      addToMemory(
-        conversationKey,
-        'assistant',
-        reminderReply,
-      );
-
-      return;
-    }
-  }
-} catch (error) {
-  logError(
-    'Reminder 處理失敗',
-    error,
-  );
-
-  /*
-   * 不在這裡吞掉 replyToken。
-   * 如果 Handler 本身已經回覆，就交由 LINE。
-   * 如果 Handler 在送出前失敗，才由下方一般 AI 流程
-   * 繼續處理。
-   */
-}
 
             /*
              * =====================================================
@@ -1155,98 +1056,6 @@ try {
  *
  * 都在這裡處理。
  * ========================================================= */
-
-async function sendReminderReply(
-  replyToken: string,
-  replyText: string,
-  mentionUserIds: string[] = [],
-  mentionAll = false,
-): Promise<void> {
-  const safeReply =
-    replyText.slice(
-      0,
-      4950,
-    );
-
-  if (mentionAll) {
-    await lineClient.replyMessage({
-      replyToken,
-      messages: [
-        {
-          type: 'textV2',
-          text:
-            `{target} ${safeReply}`,
-          substitution: {
-            target: {
-              type: 'mention',
-              mentionee: {
-                type: 'all',
-              },
-            },
-          },
-        },
-      ],
-    });
-
-    return;
-  }
-
-  const uniqueUserIds =
-    [...new Set(
-      mentionUserIds.filter(
-        (userId) =>
-          typeof userId === 'string' &&
-          userId.trim().length > 0,
-      ),
-    )];
-
-  if (!uniqueUserIds.length) {
-    await lineClient.replyMessage({
-      replyToken,
-      messages: [
-        {
-          type: 'text',
-          text: safeReply,
-        },
-      ],
-    });
-
-    return;
-  }
-
-  const substitutions: Record<string, any> = {};
-
-  const mentionText =
-    uniqueUserIds
-      .map((userId, index) => {
-        const key =
-          `mention${index}`;
-
-        substitutions[key] = {
-          type: 'mention',
-          mentionee: {
-            type: 'user',
-            userId,
-          },
-        };
-
-        return `{${key}}`;
-      })
-      .join(' ');
-
-  await lineClient.replyMessage({
-    replyToken,
-    messages: [
-      {
-        type: 'textV2',
-        text:
-          `${mentionText} ${safeReply}`,
-        substitution:
-          substitutions,
-      } as any,
-    ],
-  });
-}
 
 async function sendAiReply(
   replyToken: string,

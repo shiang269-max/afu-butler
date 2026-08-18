@@ -5,12 +5,6 @@ import {
   saveFamilyGroupId,
 } from './family-group-state';
 
-import {
-  getDueReminders,
-  completeReminder,
-  getReminderTargets,
-} from './reminder';
-
 
 /*
  * =========================================================
@@ -771,160 +765,6 @@ async function handleSilence(
 
 /*
  * =========================================================
- * Reminder
- * =========================================================
- */
-
-async function checkReminders(
-  lineClient:
-    messagingApi.MessagingApiClient,
-): Promise<void> {
-  const dueReminders =
-    getDueReminders();
-
-  for (
-    const reminder
-    of dueReminders
-  ) {
-    try {
-      const targets =
-        getReminderTargets(
-          reminder,
-        );
-
-      if (!targets.length) {
-        console.error(
-          '[Reminder] Reminder 沒有有效 targets:',
-          reminder.id,
-        );
-        continue;
-      }
-
-      /*
-       * Reminder 2.0：
-       * 一筆 Reminder 可以同時 @ 多位家庭成員。
-       *
-       * @ALL 仍然維持 LINE 原生 @ALL。
-       */
-      const hasAllTarget =
-        targets.some(
-          (target) =>
-            target.type === 'all',
-        );
-
-      if (hasAllTarget) {
-        await lineClient.pushMessage({
-          to:
-            reminder.groupId,
-          messages: [
-            {
-              type: 'textV2',
-              text:
-                `{target} ${reminder.content}`,
-              substitution: {
-                target: {
-                  type: 'mention',
-                  mentionee: {
-                    type: 'all',
-                  },
-                },
-              },
-            },
-          ],
-        });
-      } else {
-        const userTargets =
-          targets.filter(
-            (
-              target,
-            ): target is {
-              type: 'user';
-              userId: string;
-            } =>
-              target.type === 'user' &&
-              Boolean(target.userId),
-          );
-
-        if (!userTargets.length) {
-          throw new Error(
-            'Reminder 沒有有效的 user target。',
-          );
-        }
-
-        const substitutions:
-          Record<string, any> = {};
-
-        const mentionText =
-          userTargets
-            .map(
-              (
-                target,
-                index,
-              ) => {
-                const key =
-                  `target${index}`;
-
-                substitutions[key] = {
-                  type: 'mention',
-                  mentionee: {
-                    type: 'user',
-                    userId:
-                      target.userId,
-                  },
-                };
-
-                return `{${key}}`;
-              },
-            )
-            .join(' ');
-
-        await lineClient.pushMessage({
-          to:
-            reminder.groupId,
-          messages: [
-            {
-              type: 'textV2',
-              text:
-                `${mentionText} ${reminder.content}`,
-              substitution:
-                substitutions,
-            } as any,
-          ],
-        });
-      }
-
-      /*
-       * 只有 LINE push 成功後才標記完成。
-       * 發送失敗時保留 Reminder，
-       * 下一輪仍可再次嘗試。
-       */
-      if (
-        completeReminder(
-          reminder.id,
-        )
-      ) {
-        console.log(
-          '[Reminder] 已發送 Reminder:',
-          reminder.id,
-        );
-      } else {
-        console.error(
-          '[Reminder] Reminder 已發送，但完成狀態保存失敗:',
-          reminder.id,
-        );
-      }
-    } catch (error) {
-      console.error(
-        '[Reminder] 發送 Reminder 失敗:',
-        reminder.id,
-        error,
-      );
-    }
-  }
-}
-
-/*
- * =========================================================
  * 檢查單一群組
  * =========================================================
  */
@@ -1079,21 +919,6 @@ export function startProactiveScheduler(
 
   const checkAllGroups =
     async (): Promise<void> => {
-
-      try {
-
-        await checkReminders(
-          lineClient,
-        );
-
-      } catch (error) {
-
-        console.error(
-          '[Reminder] Reminder 檢查失敗:',
-          error,
-        );
-      }
-
 
       for (
         const groupId
