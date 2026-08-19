@@ -677,8 +677,7 @@ app.post(
 
 
             const shouldResolveTarget =
-              hasTrigger ||
-              hasTargetIntent;
+  hasTargetIntent;
 /*
  * =====================================================
  * Reminder
