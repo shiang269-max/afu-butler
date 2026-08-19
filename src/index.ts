@@ -676,7 +676,11 @@ app.post(
               );
 
 
-            const shouldResolveTarget =
+            const shouldInvokeController =
+  hasTrigger ||
+  hasTargetIntent;
+
+const shouldResolveTarget =
   hasTargetIntent;
 /*
  * =====================================================
@@ -778,7 +782,7 @@ try {
              * =====================================================
              */
 
-            if (!shouldResolveTarget) {
+            if (!shouldInvokeController) {
 
               addToMemory(
                 conversationKey,
