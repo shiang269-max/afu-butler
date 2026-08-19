@@ -1802,6 +1802,7 @@ function setAuthorizationPendingStates(
   candidates: Reminder[],
   groupId: string,
   action: 'cancel' | 'update',
+  originalRequest?: string,
 ): string[] {
   const userIds =
     getCommonAuthorizedUsers(
@@ -1834,6 +1835,147 @@ function clearAuthorizationPendingStates(
       `${groupId}:${userId}`,
     );
   }
+}
+
+/* =========================================================
+ * 操作結果輔助
+ * ========================================================= */
+
+function cancelReminderCandidates(
+  candidates: Reminder[],
+): {
+  count: number;
+  cancelled: Reminder[];
+} {
+  const cancelled: Reminder[] = [];
+
+  for (const reminder of candidates) {
+    if (cancelReminder(reminder.id)) {
+      cancelled.push(reminder);
+    }
+  }
+
+  return {
+    count: cancelled.length,
+    cancelled,
+  };
+}
+
+function buildCancelResult(
+  candidates: Reminder[],
+): ReminderHandlerResult {
+  const result = cancelReminderCandidates(candidates);
+
+  const cancelled = result.cancelled;
+
+  return {
+    handled: true,
+    action: 'cancel',
+    cancelled: result.count === candidates.length,
+    candidates,
+    message:
+      candidates.length === 1
+        ? result.count === 1
+          ? `喳，${formatReminderTime(candidates[0].remindAt)} 的「${candidates[0].content}」提醒已撤下。`
+          : '主上，奴才這次沒有成功撤下這道提醒。'
+        : result.count === candidates.length
+          ? `喳，已替主上撤下 ${result.count} 道提醒：\n${cancelled
+              .map(
+                (reminder) =>
+                  `・${formatReminderTime(reminder.remindAt)}｜${reminder.content}`,
+              )
+              .join('\n')}`
+          : result.count > 0
+            ? `喳，實際撤下 ${result.count} 道提醒：\n${cancelled
+                .map(
+                  (reminder) =>
+                    `・${formatReminderTime(reminder.remindAt)}｜${reminder.content}`,
+                )
+                .join('\n')}\n其餘 ${candidates.length - result.count} 道沒有撤下。`
+            : '主上，奴才這次沒有成功撤下任何一道提醒。',
+  };
+}
+
+function buildUpdateRequest(
+  parsed: ReminderParseResult,
+  message: string,
+  createdByUserId: string,
+): {
+  remindAt?: string;
+  content?: string;
+  target?: ReminderTarget;
+  targets?: ReminderTarget[];
+} {
+  const remindAt =
+    parsed.updateRemindAt ||
+    extractExplicitReminderTime(message) ||
+    (parsed.action === 'update' ? parsed.remindAt : undefined);
+
+  const newTarget = parsed.updateTarget
+    ? (resolveOneTarget(
+        parsed.updateTarget,
+        createdByUserId,
+      ) ?? undefined)
+    : undefined;
+
+  return {
+    remindAt,
+    content: parsed.updateContent,
+    target: newTarget,
+    targets: newTarget ? [newTarget] : undefined,
+  };
+}
+
+function hasActualUpdateRequest(
+  updates: ReturnType<typeof buildUpdateRequest>,
+): boolean {
+  return Boolean(
+    updates.remindAt ||
+    updates.content ||
+    updates.target
+  );
+}
+
+function applyReminderUpdate(
+  reminder: Reminder,
+  updates: ReturnType<typeof buildUpdateRequest>,
+): Reminder | null {
+  if (!hasActualUpdateRequest(updates)) {
+    return null;
+  }
+
+  const updated = updateReminder(
+    reminder.id,
+    updates,
+  );
+
+  if (!updated) {
+    return null;
+  }
+
+  if (
+    updates.remindAt &&
+    updated.remindAt !== updates.remindAt
+  ) {
+    return null;
+  }
+
+  if (
+    updates.content &&
+    updated.content !== updates.content
+  ) {
+    return null;
+  }
+
+  if (
+    updates.target &&
+    targetKey(reminderTargets(updated)) !==
+      targetKey([updates.target])
+  ) {
+    return null;
+  }
+
+  return updated;
 }
 
 /* =========================================================
@@ -1908,11 +2050,19 @@ async function handlePendingState(
     }
 
     if (cancelIntent && selectedIndices.length) {
+      if (candidates.every((reminder) =>
+        canManageReminder(reminder, createdByUserId),
+      )) {
+        clearPendingReminderState(conversationKey);
+        return buildCancelResult(candidates);
+      }
+
       const authorizationUsers =
         setAuthorizationPendingStates(
           candidates,
           groupId,
           'cancel',
+          message,
         );
 
       clearPendingReminderState(
@@ -1967,25 +2117,15 @@ async function handlePendingState(
         };
       }
 
-      const newTarget = parsedUpdate.updateTarget
-        ? resolveOneTarget(
-            parsedUpdate.updateTarget,
-            createdByUserId,
-          ) ?? undefined
-        : undefined;
+      const updates = buildUpdateRequest(
+        parsedUpdate,
+        message,
+        createdByUserId,
+      );
 
-      const updated = updateReminder(
-        selected.id,
-        {
-          remindAt:
-            parsedUpdate.updateRemindAt ||
-            extractExplicitReminderTime(message),
-          content: parsedUpdate.updateContent,
-          target: newTarget,
-          targets: newTarget
-            ? [newTarget]
-            : undefined,
-        },
+      const updated = applyReminderUpdate(
+        selected,
+        updates,
       );
 
       if (updated) {
@@ -2156,6 +2296,94 @@ async function handlePendingState(
     }
   }
 
+  /* 修改授權確認 */
+  if (
+    pending.action === 'update' &&
+    pending.requiresConfirmation
+  ) {
+    if (isYes(message)) {
+      const authorizationUsers =
+        getCommonAuthorizedUsers(candidates);
+
+      if (!authorizationUsers.includes(createdByUserId)) {
+        return {
+          handled: true,
+          action: 'authorization-confirmation',
+          candidates,
+          message:
+            `主上，這次確認需要由「${authorizationText(candidates)}」其中一人回覆「同意」。`,
+          mentionUserIds: authorizationUsers,
+        };
+      }
+
+      const originalRequest =
+        pending.originalRequest || '';
+      const parsedUpdate = await parseReminder(
+        originalRequest,
+        gemini,
+      );
+
+      const updates = buildUpdateRequest(
+        parsedUpdate,
+        originalRequest,
+        createdByUserId,
+      );
+
+      const updated =
+        candidates.length === 1
+          ? applyReminderUpdate(
+              candidates[0],
+              updates,
+            )
+          : null;
+
+      clearAuthorizationPendingStates(
+        groupId,
+        authorizationUsers,
+      );
+
+      if (updated) {
+        return {
+          handled: true,
+          action: 'update',
+          updated: true,
+          reminderId: updated.id,
+          remindAt: updated.remindAt,
+          content: updated.content,
+          target: updated.target,
+          message:
+            `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
+        };
+      }
+
+      return {
+        handled: true,
+        action: 'update',
+        updated: false,
+        candidates,
+        message:
+          '主上，奴才收到同意了，但沒有成功修改那道提醒。',
+      };
+    }
+
+    if (isNo(message)) {
+      const authorizationUsers =
+        getCommonAuthorizedUsers(candidates);
+      clearAuthorizationPendingStates(
+        groupId,
+        authorizationUsers,
+      );
+      return {
+        handled: true,
+        action: 'update',
+        updated: false,
+        candidates,
+        message:
+          '喳，奴才保留原本的提醒，沒有修改。',
+      };
+    }
+  }
+
   /* 多候選選擇 */
   const selectedIndices = extractCandidateIndices(
     message,
@@ -2168,11 +2396,19 @@ async function handlePendingState(
         (index) => candidates[index],
       );
 
+      if (selected.every((reminder) =>
+        canManageReminder(reminder, createdByUserId),
+      )) {
+        clearPendingReminderState(conversationKey);
+        return buildCancelResult(selected);
+      }
+
       const authorizationUsers =
         setAuthorizationPendingStates(
           selected,
           groupId,
           'cancel',
+          message,
         );
 
       clearPendingReminderState(
@@ -2244,36 +2480,8 @@ async function handlePendingState(
   }
 
   if (pending.action === 'cancel') {
-    const authorizationUsers =
-      setAuthorizationPendingStates(
-        [selected],
-        groupId,
-        'cancel',
-      );
-
-    clearPendingReminderState(
-      conversationKey,
-    );
-
-    if (!authorizationUsers.length) {
-      return {
-        handled: true,
-        action: 'authorization-confirmation',
-        candidates: [selected],
-        message:
-          '主上，這道提醒沒有可確認的授權人，奴才不敢擅自撤下。',
-      };
-    }
-
-    return {
-      handled: true,
-      action: 'authorization-confirmation',
-      candidates: [selected],
-      message:
-        `主上，這道提醒由建立人與被提醒者共同擁有取消權。請由「${authorizationText([selected])}」其中一人回覆「同意」，奴才才會撤下。`,
-      mentionUserIds:
-        authorizationUsers,
-    };
+    clearPendingReminderState(conversationKey);
+    return buildCancelResult([selected]);
   }
 
   clearPendingReminderState(conversationKey);
@@ -2441,11 +2649,16 @@ function handleCancel(
   if (reminders.length === 1) {
     const reminder = reminders[0];
 
+    if (canManageReminder(reminder, createdByUserId)) {
+      return buildCancelResult([reminder]);
+    }
+
     const authorizationUsers =
       setAuthorizationPendingStates(
         [reminder],
         groupId,
         'cancel',
+        parsed.content || undefined,
       );
 
     if (!authorizationUsers.length) {
@@ -2507,6 +2720,7 @@ function handleUpdate(
   parsed: ReminderParseResult,
   createdByUserId: string,
   groupId: string,
+  originalRequest = '',
 ): ReminderHandlerResult {
   let reminders = getQueryReminders(
     groupId,
@@ -2571,6 +2785,7 @@ function handleUpdate(
       [reminder],
       groupId,
       'update',
+      originalRequest || parsed.updateRemindAt || parsed.updateContent || undefined,
     );
 
     return {
@@ -2582,21 +2797,16 @@ function handleUpdate(
     };
   }
 
-  const newTarget = parsed.updateTarget
-    ? (resolveOneTarget(
-        parsed.updateTarget,
-        createdByUserId,
-      ) ?? undefined)
-    : undefined;
+  const updates = buildUpdateRequest(
+    parsed,
+    '',
+    createdByUserId,
+  );
 
-  const updated = updateReminder(reminder.id, {
-    remindAt: parsed.updateRemindAt,
-    content: parsed.updateContent,
-    target: newTarget,
-    targets: newTarget
-      ? [newTarget]
-      : undefined,
-  });
+  const updated = applyReminderUpdate(
+    reminder,
+    updates,
+  );
 
   if (!updated) {
     return {
@@ -2622,6 +2832,35 @@ function handleUpdate(
 }
 
 /* =========================================================
+ * Reminder 呼叫詞／指令模式
+ * ========================================================= */
+
+const REMINDER_INVOCATION_WORDS = [
+  '大內總管',
+  '總管',
+  '內內',
+  '喳子',
+  '渣子',
+];
+
+function hasReminderInvocation(
+  message: string,
+): boolean {
+  return REMINDER_INVOCATION_WORDS.some(
+    (word) => message.includes(word),
+  );
+}
+
+function stripReminderInvocationWords(
+  message: string,
+): string {
+  return REMINDER_INVOCATION_WORDS.reduce(
+    (text, word) => text.replaceAll(word, ''),
+    message,
+  ).trim();
+}
+
+/* =========================================================
  * 主要入口
  * ========================================================= */
 
@@ -2630,6 +2869,7 @@ export async function handleReminderMessage(
   createdByUserId: string,
   groupId: string,
   gemini: GoogleGenAI,
+  hasInvocation = false,
 ): Promise<ReminderHandlerResult> {
   if (
     !message.trim() ||
@@ -2639,17 +2879,33 @@ export async function handleReminderMessage(
     return { handled: false };
   }
 
-  /*
-   * Pending State 優先，但只有真正像「回覆上一個操作」時才攔截。
-   * 這讓「4取消」、「4跟6」、「取消14:19」可以直接使用上一輪候選，
-   * 同時保留「取消明天提醒」這種全新指令的自然語言解析。
-   */
-  const pending = getPendingReminderState(
-    `${groupId}:${createdByUserId}`,
-  );
+  const conversationKey =
+    `${groupId}:${createdByUserId}`;
 
-  if (pending) {
-    const normalized = message.trim();
+  /*
+   * 正式 Reminder 指令與上下文 Follow-up 是兩種不同模式：
+   *
+   * 1. 有呼叫詞：一定視為新的正式 Reminder 指令。
+   *    正式指令永遠優先，不被上一輪 Pending State 攔截。
+   *
+   * 2. 沒有呼叫詞：只有「上一輪真正留下的操作上下文」
+   *    才能承接，而且只允許這一個下一則訊息。
+   *
+   * 這裡刻意不讓 Pending State 與正式命令互相競爭。
+   */
+  const normalizedMessage =
+    stripReminderInvocationWords(message);
+
+  if (!normalizedMessage) {
+    /* 「喳子」本身只是呼叫總管，不是 Reminder 指令。 */
+    return { handled: false };
+  }
+
+  const pending =
+    getPendingReminderState(conversationKey);
+
+  if (!hasInvocation && pending) {
+    const normalized = normalizedMessage;
     const looksLikePendingResponse =
       containsCancelIntent(normalized) ||
       containsUpdateIntent(normalized) ||
@@ -2657,49 +2913,52 @@ export async function handleReminderMessage(
       isNo(normalized) ||
       hasExplicitCandidateSelector(normalized);
 
-    /*
-     * 只要訊息本身已經明確是新的建立 Reminder 指令，
-     * 就絕對不能拿上一輪查詢候選去攔截。
-     *
-     * 這是本輪最重要的回歸修正：
-     * 「提醒辰19:00倒垃圾」不能因為上一輪候選
-     * 剛好也有「倒垃圾」，就被當成取消舊提醒。
-     */
-    const isExplicitNewCreate =
-      detectStrongReminderAction(normalized) === 'create';
+    if (looksLikePendingResponse) {
+      const pendingResult =
+        await handlePendingState(
+          normalized,
+          createdByUserId,
+          groupId,
+          gemini,
+        );
 
-    const isExplicitNewBatchCancel =
-      containsCancelIntent(normalized) &&
-      (
-        normalized.includes('全部') ||
-        normalized.includes('所有') ||
-        normalized.includes('明天') ||
-        normalized.includes('今天') ||
-        normalized.includes('這週') ||
-        normalized.includes('本週') ||
-        normalized.includes('這個月') ||
-        normalized.includes('本月')
-      ) &&
-      !hasExplicitCandidateSelector(normalized) &&
-      !extractExplicitReminderTime(normalized);
-
-    if (
-      looksLikePendingResponse &&
-      !isExplicitNewBatchCancel &&
-      !isExplicitNewCreate
-    ) {
-      const pendingResult = await handlePendingState(
-        message,
-        createdByUserId,
-        groupId,
-        gemini,
-      );
-
-      if (pendingResult) return pendingResult;
+      if (pendingResult) {
+        /*
+         * handlePendingState 自己決定是否仍需保留狀態。
+         * 例如「同意」未必代表本使用者就是授權人，
+         * 或重複提醒確認仍可能等待下一次「要／不要」。
+         * 因此這裡不能無條件清除 Pending。
+         */
+        return pendingResult;
+      }
     }
+
+    /*
+     * 有 Pending 但這一句不是合法 Follow-up：
+     * 這一次機會立即失效，不讓舊上下文污染下一句。
+     */
+    clearPendingReminderState(
+      conversationKey,
+    );
+    return { handled: false };
   }
 
-  const hasReminderIntent = mayBeReminder(message);
+  /*
+   * 沒有呼叫詞、也沒有有效的一次性上下文：
+   * 不允許建立新的 Reminder 指令。
+   * 這是本輪「正式命令必須呼叫」的硬邊界。
+   */
+  if (!hasInvocation) {
+    return { handled: false };
+  }
+
+  /*
+   * 有呼叫詞 → 正式 Reminder 模式。
+   * 此時完全不使用舊 Pending State，避免兩套指令規則互相卡住。
+   */
+  const hasReminderIntent =
+    mayBeReminder(normalizedMessage) ||
+    normalizedMessage.length > 0;
 
   if (hasReminderIntent) {
     let parsed: ReminderParseResult;
@@ -2707,7 +2966,7 @@ export async function handleReminderMessage(
     try {
       parsed =
         await parseReminderWithTimeout(
-          message,
+          normalizedMessage,
           gemini,
         );
     } catch (error) {
@@ -2726,13 +2985,13 @@ export async function handleReminderMessage(
     parsed =
       applyReminderNaturalLanguageHints(
         parsed,
-        message,
+        normalizedMessage,
       );
 
     if (parsed.action !== 'none') {
-      /* 新指令取代舊 Pending State。 */
+      /* 新正式指令取代舊 Pending State。 */
       clearPendingReminderState(
-        `${groupId}:${createdByUserId}`,
+        conversationKey,
       );
 
       switch (parsed.action) {
@@ -2762,12 +3021,21 @@ export async function handleReminderMessage(
             parsed,
             createdByUserId,
             groupId,
+            normalizedMessage,
           );
 
         default:
           return { handled: false };
       }
     }
+
+    /*
+     * 有正式呼叫詞但 Parser 判定不是 Reminder 指令。
+     * 不讓舊 Pending State 回頭接手，也不虛構操作結果。
+     */
+    clearPendingReminderState(
+      conversationKey,
+    );
   }
 
   return { handled: false };
@@ -2802,6 +3070,7 @@ export async function createReminderFromMessage(
     createdByUserId,
     groupId,
     gemini,
+    hasReminderInvocation(message),
   );
 
   return {

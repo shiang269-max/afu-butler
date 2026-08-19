@@ -273,6 +273,27 @@ function hasFamilyTargetIntent(
 
 /**
  * =========================================================
+ * Reminder 呼叫詞
+ * =========================================================
+ */
+
+function hasReminderInvocation(
+  message: string,
+): boolean {
+  return [
+    '大內總管',
+    '總管',
+    '內內',
+    '喳子',
+    '渣子',
+  ].some(
+    (word) => message.includes(word),
+  );
+}
+
+
+/**
+ * =========================================================
  * 清除總管呼叫詞
  * =========================================================
  */
@@ -693,12 +714,11 @@ try {
   if (reminderGroupId) {
     const reminderResult =
       await handleReminderMessage(
-        cleanTriggerWords(
-          userMessage,
-        ),
+        userMessage,
         event.source.userId || '',
         reminderGroupId,
         gemini,
+        hasReminderInvocation(userMessage),
       );
 
     if (reminderResult.handled) {
