@@ -737,11 +737,23 @@ try {
             : '喳，奴才已處理這道 Reminder。'
         );
 
+      // LINE Mention 只在群組訊息中執行。
+      // 私訊即使 Handler 回傳 mentionUserIds，也不把 Mention payload
+      // 帶進私訊回覆，避免特殊 Reminder 回覆路徑使用不適合的 payload。
+      const reminderMentionUserIds =
+        event.source.type === 'group'
+          ? reminderResult.mentionUserIds
+          : [];
+
+      const reminderMentionAll =
+        event.source.type === 'group' &&
+        reminderResult.mentionAll === true;
+
       await sendReminderReply(
         event.replyToken,
         reminderReply,
-        reminderResult.mentionUserIds,
-        reminderResult.mentionAll === true,
+        reminderMentionUserIds,
+        reminderMentionAll,
       );
 
       addToMemory(
@@ -766,11 +778,24 @@ try {
   );
 
   /*
-   * 不在這裡吞掉 replyToken。
-   * 如果 Handler 本身已經回覆，就交由 LINE。
-   * 如果 Handler 在送出前失敗，才由下方一般 AI 流程
-   * 繼續處理。
+   * Reminder 已經接管這個 event。
+   * 如果 Reminder 回覆階段失敗，不能再把同一個 replyToken
+   * 交給下方 AI Core 二次處理。
+   *
+   * 否則會形成：
+   * Reminder reply 失敗
+   *   ↓
+   * catch 吞掉錯誤
+   *   ↓
+   * AI Core 再次處理同一個 event
+   *   ↓
+   * 再次使用同一個 replyToken
+   *   ↓
+   * LINE Invalid reply token
+   *
+   * 因此這裡直接結束本次 event。
    */
+  return;
 }
 
             /*
