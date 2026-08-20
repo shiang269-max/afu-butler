@@ -7,9 +7,16 @@ import {
 
 import {
   getDueReminders,
-  completeReminder,
-  getReminderTargets,
+  claimReminder,
+  markReminderSent,
+  markReminderFailed,
+  expireReminderBacklog,
 } from './reminder';
+
+import {
+  canSendPush,
+  getQuotaSnapshot,
+} from './line-quota';
 
 
 /*
@@ -61,6 +68,10 @@ const TIME_ZONE = 'Asia/Taipei';
 const GOOD_NIGHT_HOUR = 22;
 const GOOD_NIGHT_MINUTE = 30;
 
+/* 固定早安／晚安暫停。保留程式碼，之後可重新啟用。 */
+const ENABLE_GOOD_NIGHT = false;
+const ENABLE_GOOD_MORNING = false;
+
 
 /*
  * =========================================================
@@ -78,7 +89,7 @@ const GOOD_MORNING_MINUTE = 0;
  * =========================================================
  */
 
-const SILENCE_HOURS = 6;
+const SILENCE_HOURS = 48;
 
 
 /*
@@ -412,6 +423,32 @@ async function sendProactiveMessage(
   text: string,
 ): Promise<void> {
 
+  /*
+   * 冷場／其他非必要主動訊息：
+   *
+   * 剩餘 < 50 時直接停止。
+   * Reminder 不經過這裡，因此不受這個限制。
+   */
+  const quota =
+    await getQuotaSnapshot(
+      lineClient,
+    );
+
+  if (
+    !canSendPush(
+      quota,
+      'non-essential',
+    )
+  ) {
+
+    console.log(
+      '[Quota Guard] 阻止非必要主動 Push。',
+      JSON.stringify(quota),
+    );
+
+    return;
+  }
+
   await lineClient.pushMessage(
     {
       to:
@@ -532,6 +569,10 @@ async function handleGoodNight(
   minute: number,
 ): Promise<void> {
 
+  if (!ENABLE_GOOD_NIGHT) {
+    return;
+  }
+
   if (
     !isExactMinute(
       hour,
@@ -589,6 +630,10 @@ async function handleGoodMorning(
 
   minute: number,
 ): Promise<void> {
+
+  if (!ENABLE_GOOD_MORNING) {
+    return;
+  }
 
   if (
     !isExactMinute(
@@ -730,6 +775,33 @@ async function handleSilence(
   }
 
 
+  /*
+   * 額度不足時，連 Gemini 都不要叫。
+   *
+   * 冷場屬於非必要主動訊息：
+   * 剩餘 < 50 即停止。
+   */
+  const quota =
+    await getQuotaSnapshot(
+      lineClient,
+    );
+
+  if (
+    !canSendPush(
+      quota,
+      'non-essential',
+    )
+  ) {
+
+    console.log(
+      '[Quota Guard] 冷場主動訊息暫停:',
+      JSON.stringify(quota),
+    );
+
+    return;
+  }
+
+
   const reply =
     await generateProactiveReply(
       'silence',
@@ -779,6 +851,7 @@ async function checkReminders(
   lineClient:
     messagingApi.MessagingApiClient,
 ): Promise<void> {
+
   const dueReminders =
     getDueReminders();
 
@@ -786,142 +859,158 @@ async function checkReminders(
     const reminder
     of dueReminders
   ) {
+
+    /*
+     * 先取得唯一發送資格。
+     *
+     * 如果另一輪 Scheduler 已經處理，
+     * 這裡直接跳過。
+     */
+    if (
+      !claimReminder(
+        reminder.id,
+      )
+    ) {
+      continue;
+    }
+
     try {
-      const targets =
-        getReminderTargets(
-          reminder,
+
+      /*
+       * Reminder 是必要主動訊息：
+       *
+       * 只要尚有可用額度，就允許發送。
+       *
+       * = 0 時完全阻斷。
+       */
+      const quota =
+        await getQuotaSnapshot(
+          lineClient,
         );
 
-      if (!targets.length) {
-        console.error(
-          '[Reminder] Reminder 沒有有效 targets:',
+      if (
+        !canSendPush(
+          quota,
+          'reminder',
+        )
+      ) {
+
+        console.log(
+          '[Quota Guard] Reminder 因剩餘額度為 0 而終結:',
+          reminder.id,
+          JSON.stringify(quota),
+        );
+
+        markReminderFailed(
           reminder.id,
         );
+
         continue;
       }
 
-      /*
-       * Reminder 2.0：
-       * 一筆 Reminder 可以同時 @ 多位家庭成員。
-       *
-       * @ALL 仍然維持 LINE 原生 @ALL。
-       */
-      const hasAllTarget =
-        targets.some(
-          (target) =>
-            target.type === 'all',
-        );
+      if (
+        reminder.target.type === 'all'
+      ) {
 
-      if (hasAllTarget) {
-        await lineClient.pushMessage({
-          to:
-            reminder.groupId,
-          messages: [
-            {
-              type: 'textV2',
-              text:
-                `{target} ${reminder.content}`,
-              substitution: {
-                target: {
-                  type: 'mention',
-                  mentionee: {
-                    type: 'all',
+        await lineClient.pushMessage(
+          {
+            to:
+              reminder.groupId,
+
+            messages: [
+              {
+                type:
+                  'textV2',
+
+                text:
+                  `{target} ${reminder.content}`,
+
+                substitution: {
+                  target: {
+                    type:
+                      'mention',
+
+                    mentionee: {
+                      type:
+                        'all',
+                    },
                   },
                 },
               },
-            },
-          ],
-        });
+            ],
+          },
+        );
+
       } else {
-        const userTargets =
-          targets.filter(
-            (
-              target,
-            ): target is {
-              type: 'user';
-              userId: string;
-            } =>
-              target.type === 'user' &&
-              Boolean(target.userId),
-          );
 
-        if (!userTargets.length) {
-          throw new Error(
-            'Reminder 沒有有效的 user target。',
-          );
-        }
+        await lineClient.pushMessage(
+          {
+            to:
+              reminder.groupId,
 
-        const substitutions:
-          Record<string, any> = {};
+            messages: [
+              {
+                type:
+                  'textV2',
 
-        const mentionText =
-          userTargets
-            .map(
-              (
-                target,
-                index,
-              ) => {
-                const key =
-                  `target${index}`;
+                text:
+                  `{target} ${reminder.content}`,
 
-                substitutions[key] = {
-                  type: 'mention',
-                  mentionee: {
-                    type: 'user',
+                substitution: {
+                  target: {
+                    type:
+                      'mention',
+
+                    mentionee: {
+                      type:
+                        'user',
+
                     userId:
-                      target.userId,
+                      reminder.target.userId,
+                    },
                   },
-                };
-
-                return `{${key}}`;
+                },
               },
-            )
-            .join(' ');
-
-        await lineClient.pushMessage({
-          to:
-            reminder.groupId,
-          messages: [
-            {
-              type: 'textV2',
-              text:
-                `${mentionText} ${reminder.content}`,
-              substitution:
-                substitutions,
-            } as any,
-          ],
-        });
+            ],
+          },
+        );
       }
 
       /*
-       * 只有 LINE push 成功後才標記完成。
-       * 發送失敗時保留 Reminder，
-       * 下一輪仍可再次嘗試。
+       * Push 成功才標記 sent。
        */
-      if (
-        completeReminder(
-          reminder.id,
-        )
-      ) {
-        console.log(
-          '[Reminder] 已發送 Reminder:',
-          reminder.id,
-        );
-      } else {
-        console.error(
-          '[Reminder] Reminder 已發送，但完成狀態保存失敗:',
-          reminder.id,
-        );
-      }
+      markReminderSent(
+        reminder.id,
+      );
+
+      console.log(
+        '[Reminder] 已發送 Reminder:',
+        reminder.id,
+      );
+
     } catch (error) {
+
+      /*
+       * 最重要的防線：
+       *
+       * 429 / 網路錯誤 / 任何 Push 失敗
+       * → failed
+       * → 終結
+       * → 絕不進入下一輪重試
+       */
+      markReminderFailed(
+        reminder.id,
+      );
+
       console.error(
-        '[Reminder] 發送 Reminder 失敗:',
+        '[Reminder] 發送 Reminder 失敗，已終結:',
         reminder.id,
         error,
       );
     }
   }
 }
+
 
 /*
  * =========================================================
@@ -1040,6 +1129,27 @@ export function startProactiveScheduler(
    * 先恢復以前保存的家庭群組。
    */
 
+  /*
+   * 啟動時第一件事：
+   *
+   * 終結所有歷史 backlog。
+   *
+   * 因此額度恢復時不會把停機期間累積的 Reminder
+   * 一口氣補送出去。
+   */
+  const expiredBacklogCount =
+    expireReminderBacklog();
+
+  if (
+    expiredBacklogCount > 0
+  ) {
+    console.log(
+      '[Reminder] 啟動時已阻止 Backlog 補送:',
+      expiredBacklogCount,
+    );
+  }
+
+
   loadSavedFamilyGroup();
 
 
@@ -1049,12 +1159,12 @@ export function startProactiveScheduler(
 
 
   console.log(
-    '固定早安：06:00',
+    '固定早安：暫停',
   );
 
 
   console.log(
-    '固定晚安：22:30',
+    '固定晚安：暫停',
   );
 
 

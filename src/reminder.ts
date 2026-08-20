@@ -77,6 +77,26 @@ export type ReminderTargets =
 
 /*
  * =========================================================
+ * Reminder 發送狀態
+ * =========================================================
+ *
+ * pending     → 等待到期
+ * processing  → 已取得發送資格，禁止其他輪次再次處理
+ * sent        → 已成功發送
+ * failed      → 發送失敗，終結，不再重試
+ * expired     → 已過期／因防止 Backlog 而終結
+ */
+
+export type ReminderDeliveryStatus =
+  | 'pending'
+  | 'processing'
+  | 'sent'
+  | 'failed'
+  | 'expired';
+
+
+/*
+ * =========================================================
  * Reminder 資料
  * =========================================================
  */
@@ -147,6 +167,14 @@ export interface Reminder {
    */
 
   cancelled?: boolean;
+
+
+  /*
+   * Reminder 發送生命週期。
+   *
+   * 舊資料沒有此欄位時視為 pending。
+   */
+  deliveryStatus?: ReminderDeliveryStatus;
 }
 
 
@@ -589,6 +617,22 @@ function normalizeReminder(
         typeof item.cancelled === 'boolean'
           ? item.cancelled
           : false,
+
+      deliveryStatus:
+        typeof item.deliveryStatus === 'string' &&
+        (
+          item.deliveryStatus === 'pending' ||
+          item.deliveryStatus === 'processing' ||
+          item.deliveryStatus === 'sent' ||
+          item.deliveryStatus === 'failed' ||
+          item.deliveryStatus === 'expired'
+        )
+          ? item.deliveryStatus as ReminderDeliveryStatus
+          : item.completed
+            ? 'sent'
+            : item.cancelled === true
+              ? 'expired'
+              : 'pending',
     };
   }
 
@@ -693,6 +737,22 @@ function normalizeReminder(
       typeof item.cancelled === 'boolean'
         ? item.cancelled
         : false,
+
+    deliveryStatus:
+      typeof item.deliveryStatus === 'string' &&
+      (
+        item.deliveryStatus === 'pending' ||
+        item.deliveryStatus === 'processing' ||
+        item.deliveryStatus === 'sent' ||
+        item.deliveryStatus === 'failed' ||
+        item.deliveryStatus === 'expired'
+      )
+        ? item.deliveryStatus as ReminderDeliveryStatus
+        : item.completed
+          ? 'sent'
+          : item.cancelled === true
+            ? 'expired'
+            : 'pending',
   };
 }
 
@@ -1025,6 +1085,15 @@ function normalizeReminderForSave(
 
     cancelled:
       reminder.cancelled === true,
+
+    deliveryStatus:
+      reminder.deliveryStatus ?? (
+        reminder.completed
+          ? 'sent'
+          : reminder.cancelled === true
+            ? 'expired'
+            : 'pending'
+      ),
   };
 }
 
@@ -1092,7 +1161,11 @@ export function getActiveReminders():
       reminder,
     ) =>
       !reminder.completed &&
-      reminder.cancelled !== true,
+      reminder.cancelled !== true &&
+      (
+        reminder.deliveryStatus === undefined ||
+        reminder.deliveryStatus === 'pending'
+      ),
   );
 }
 
@@ -1585,6 +1658,325 @@ export function updateReminder(
  * =========================================================
  */
 
+/*
+ * =========================================================
+ * 取得 Reminder 發送資格
+ * =========================================================
+ *
+ * 這是防止重複 Push 的核心鎖。
+ *
+ * 只有 pending 可以進入 processing。
+ * 一旦進入 processing，其他 Scheduler 輪次
+ * 不得再次取得發送資格。
+ * =========================================================
+ */
+
+export function claimReminder(
+  reminderId: string,
+): boolean {
+
+  if (!reminderId) {
+    return false;
+  }
+
+  const reminders =
+    loadReminders();
+
+  const reminder =
+    reminders.find(
+      (item) =>
+        item.id === reminderId,
+    );
+
+  if (!reminder) {
+    return false;
+  }
+
+  const status =
+    reminder.deliveryStatus ??
+    (
+      reminder.completed
+        ? 'sent'
+        : reminder.cancelled === true
+          ? 'expired'
+          : 'pending'
+    );
+
+  if (
+    reminder.completed ||
+    reminder.cancelled === true ||
+    status !== 'pending'
+  ) {
+    return false;
+  }
+
+  reminder.deliveryStatus =
+    'processing';
+
+  saveReminders(
+    reminders,
+  );
+
+  const persisted =
+    verifyReminderPersisted(
+      reminderId,
+    );
+
+  if (
+    !persisted ||
+    persisted.deliveryStatus !== 'processing'
+  ) {
+    console.error(
+      '[Reminder] 取得發送資格失敗:',
+      reminderId,
+    );
+    return false;
+  }
+
+  console.log(
+    '[Reminder] 已取得發送資格:',
+    reminderId,
+  );
+
+  return true;
+}
+
+
+/*
+ * =========================================================
+ * Reminder 發送結果：成功
+ * =========================================================
+ */
+
+export function markReminderSent(
+  reminderId: string,
+): boolean {
+
+  return setReminderDeliveryStatus(
+    reminderId,
+    'sent',
+    true,
+  );
+}
+
+
+/*
+ * =========================================================
+ * Reminder 發送結果：失敗
+ * =========================================================
+ *
+ * failed 是終結狀態。
+ * 不允許下一輪 Scheduler 再次取得資格。
+ * =========================================================
+ */
+
+export function markReminderFailed(
+  reminderId: string,
+): boolean {
+
+  return setReminderDeliveryStatus(
+    reminderId,
+    'failed',
+    true,
+  );
+}
+
+
+/*
+ * =========================================================
+ * Reminder 發送結果：過期
+ * =========================================================
+ *
+ * expired 是終結狀態。
+ * 用於 Server 重啟時清除 backlog，
+ * 或任何不應再補送的 Reminder。
+ * =========================================================
+ */
+
+export function markReminderExpired(
+  reminderId: string,
+): boolean {
+
+  return setReminderDeliveryStatus(
+    reminderId,
+    'expired',
+    true,
+  );
+}
+
+
+/*
+ * =========================================================
+ * 批次終結過期／處理中的 Reminder
+ * =========================================================
+ *
+ * 啟動時使用：
+ *
+ * - processing → expired
+ * - 已經到期但尚未送出的 pending → expired
+ *
+ * 目的：
+ * 額度恢復後禁止 Backlog 補送。
+ * =========================================================
+ */
+
+export function expireReminderBacklog(
+  now: Date = new Date(),
+): number {
+
+  const nowTime =
+    now.getTime();
+
+  const reminders =
+    loadReminders();
+
+  let expiredCount =
+    0;
+
+  for (
+    const reminder
+    of reminders
+  ) {
+
+    const status =
+      reminder.deliveryStatus ??
+      (
+        reminder.completed
+          ? 'sent'
+          : reminder.cancelled === true
+            ? 'expired'
+            : 'pending'
+      );
+
+    const remindTime =
+      new Date(
+        reminder.remindAt,
+      ).getTime();
+
+    const isPastDue =
+      !Number.isNaN(remindTime) &&
+      remindTime <= nowTime;
+
+    if (
+      status === 'processing' ||
+      (
+        status === 'pending' &&
+        isPastDue
+      )
+    ) {
+
+      reminder.deliveryStatus =
+        'expired';
+
+      reminder.cancelled =
+        true;
+
+      expiredCount++;
+    }
+  }
+
+  if (
+    expiredCount > 0
+  ) {
+
+    saveReminders(
+      reminders,
+    );
+
+    console.log(
+      '[Reminder] 已終結歷史／過期 Reminder:',
+      expiredCount,
+    );
+  }
+
+  return expiredCount;
+}
+
+
+/*
+ * =========================================================
+ * Reminder 發送狀態內部更新
+ * =========================================================
+ */
+
+function setReminderDeliveryStatus(
+  reminderId: string,
+  status: ReminderDeliveryStatus,
+  terminal: boolean,
+): boolean {
+
+  if (!reminderId) {
+    return false;
+  }
+
+  const reminders =
+    loadReminders();
+
+  const reminder =
+    reminders.find(
+      (item) =>
+        item.id === reminderId,
+    );
+
+  if (!reminder) {
+    return false;
+  }
+
+  if (
+    terminal &&
+    reminder.deliveryStatus === 'sent'
+  ) {
+    return status === 'sent';
+  }
+
+  reminder.deliveryStatus =
+    status;
+
+  if (
+    status === 'sent'
+  ) {
+
+    reminder.completed =
+      true;
+
+    reminder.cancelled =
+      false;
+
+  } else if (
+    status === 'failed' ||
+    status === 'expired'
+  ) {
+
+    reminder.cancelled =
+      true;
+  }
+
+  saveReminders(
+    reminders,
+  );
+
+  const persisted =
+    verifyReminderPersisted(
+      reminderId,
+    );
+
+  if (!persisted) {
+    return false;
+  }
+
+  return (
+    persisted.deliveryStatus ===
+    status
+  );
+}
+
+
+/*
+ * =========================================================
+ * 取消 Reminder
+ * =========================================================
+ */
+
 export function cancelReminder(
   reminderId: string,
 ): boolean {
@@ -1647,6 +2039,9 @@ export function cancelReminder(
 
   reminder.cancelled =
     true;
+
+  reminder.deliveryStatus =
+    'expired';
 
 
   saveReminders(
@@ -1737,6 +2132,9 @@ export function cancelReminders(
     reminder.cancelled =
       true;
 
+    reminder.deliveryStatus =
+      'expired';
+
 
     cancelledCount++;
   }
@@ -1818,6 +2216,9 @@ export function completeReminder(
 
   reminder.completed =
     true;
+
+  reminder.deliveryStatus =
+    'sent';
 
 
   saveReminders(

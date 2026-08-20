@@ -49,6 +49,11 @@ import {
   logError,
 } from './error-handler';
 
+import {
+  getQuotaSnapshot,
+  formatQuotaSummary,
+} from './line-quota';
+
 
 /**
  * =========================================================
@@ -686,6 +691,114 @@ app.post(
 
 const shouldResolveTarget =
   hasTargetIntent;
+
+/*
+ * =====================================================
+ * LINE 額度查詢
+ * =====================================================
+ *
+ * 這是免費的 Reply Message。
+ *
+ * 使用：
+ * 「內內查詢額度」
+ * 「總管 LINE 配額」
+ * 「內內剩餘多少額度」
+ *
+ * 直接查 LINE Messaging API，
+ * 不交給 Gemini，避免浪費 Gemini 額度。
+ * =====================================================
+ */
+
+if (
+  hasTrigger &&
+  /額度|配額/.test(
+    userMessage,
+  )
+) {
+
+  try {
+
+    const quota =
+      await getQuotaSnapshot(
+        lineClient,
+      );
+
+    const quotaReply =
+      formatQuotaSummary(
+        quota,
+      );
+
+    await lineClient.replyMessage(
+      {
+        replyToken:
+          event.replyToken,
+
+        messages: [
+          {
+            type:
+              'text',
+
+            text:
+              quotaReply.slice(
+                0,
+                5000,
+              ),
+          },
+        ],
+      },
+    );
+
+    addToMemory(
+      conversationKey,
+      'user',
+      userMessage,
+    );
+
+    addToMemory(
+      conversationKey,
+      'assistant',
+      quotaReply,
+    );
+
+  } catch (error) {
+
+    logError(
+      'LINE 額度查詢失敗',
+      error,
+    );
+
+    try {
+
+      await lineClient.replyMessage(
+        {
+          replyToken:
+            event.replyToken,
+
+          messages: [
+            {
+              type:
+                'text',
+
+              text:
+                '奴才暫時查不到 LINE 額度，請稍後再問。',
+            },
+          ],
+        },
+      );
+
+    } catch (
+      fallbackError
+    ) {
+
+      logError(
+        'LINE 額度查詢備援回覆失敗',
+        fallbackError,
+      );
+    }
+  }
+
+  return;
+}
 /*
  * =====================================================
  * Reminder
