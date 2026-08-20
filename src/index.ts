@@ -36,6 +36,10 @@ import {
 } from './ai/ai-core';
 
 import {
+  geminiApiManager,
+} from './ai/gemini-api-manager';
+
+import {
   buildAiContext,
   normalizeConversationMessages,
 } from './ai/ai-context';
@@ -1030,7 +1034,7 @@ try {
               const aiResult =
                 await runAiCore(
                   {
-                    gemini,
+                    geminiApiManager,
 
                     context:
                       aiContext,

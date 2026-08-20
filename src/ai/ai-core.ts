@@ -14,7 +14,7 @@
  * - 建立 AI 指令
  * - 判斷是否需要即時資訊
  * - 必要時使用 Google Search
- * - 呼叫 Gemini
+ * - 透過 Gemini API Manager 呼叫 Gemini
  * - 回傳最終回答
  *
  * AI Core 不負責：
@@ -26,12 +26,13 @@
  * - 家庭目標解析
  *
  * 這些由其他模組處理。
+ *
+ * Gemini API Manager 負責：
+ * - API Key 管理
+ * - Key 額度／限流／授權異常判斷
+ * - 自動切換可用 Key
  * =========================================================
  */
-
-import {
-  GoogleGenAI,
-} from '@google/genai';
 
 import {
   SYSTEM_INSTRUCTION,
@@ -41,6 +42,10 @@ import {
   AiContext,
   buildAiContextPrompt,
 } from './ai-context';
+
+import {
+  geminiApiManager as defaultGeminiApiManager,
+} from './gemini-api-manager';
 
 
 /**
@@ -82,9 +87,21 @@ export interface AiCoreResult {
 export interface AiCoreInput {
 
   /**
-   * 已建立好的 Gemini Client。
+   * Gemini API Manager。
+   *
+   * 由 index.ts 傳入目前正式使用的 Manager。
+   *
+   * Manager 會在真正呼叫 Gemini 時：
+   *
+   * Primary
+   * ↓
+   * 發生 Key / 額度 / 限流 / 授權類錯誤
+   * ↓
+   * 自動切換 Backup
+   *
+   * 若未傳入，則使用預設的全域 Manager。
    */
-  gemini: GoogleGenAI;
+  geminiApiManager?: typeof defaultGeminiApiManager;
 
   /**
    * 完整 LINE / 家庭 Context。
@@ -117,8 +134,11 @@ export interface AiCoreInput {
  *
  * 才把 Google Search 工具交給 Gemini。
  *
- * 最終是否真的使用 Search，
- * 仍由 Gemini 自己判斷。
+ * 目前 Google Search Grounding 暫停使用，
+ * buildGoogleSearchTools() 維持空陣列。
+ *
+ * 這個判斷函式先保留，
+ * 供未來 Node.js Action / Search 功能恢復時使用。
  * =========================================================
  */
 
@@ -202,11 +222,24 @@ function mayNeedGoogleSearch(
  * =========================================================
  * 建立搜尋工具
  * =========================================================
+ *
+ * Google Search Grounding 目前暫停。
+ *
+ * 不在這裡直接呼叫 Google Search，
+ * 避免再次造成目前已確認的 429 問題。
+ *
+ * 未來若恢復搜尋，
+ * 應優先透過獨立 Node.js Action / Tool Layer，
+ * 而不是把 Search 直接重新塞回 AI Core。
+ * =========================================================
  */
 
 function buildGoogleSearchTools(
   currentMessage: string,
 ): Array<Record<string, unknown>> {
+
+  void currentMessage;
+  void mayNeedGoogleSearch;
 
   return [];
 }
@@ -527,7 +560,6 @@ export async function runAiCore(
 ): Promise<AiCoreResult> {
 
   const {
-    gemini,
     context,
   } = input;
 
@@ -535,6 +567,11 @@ export async function runAiCore(
   const model =
     input.model ??
     DEFAULT_MODEL;
+
+
+  const apiManager =
+    input.geminiApiManager ??
+    defaultGeminiApiManager;
 
 
   /*
@@ -572,7 +609,7 @@ export async function runAiCore(
    * =======================================================
    * 建立工具說明
    * =======================================================
-   */
+ */
 
   const toolInstruction =
     googleSearchTools.length > 0
@@ -603,7 +640,7 @@ export async function runAiCore(
    * =======================================================
    * 建立 AI Prompt
    * =======================================================
-   */
+ */
 
   const prompt = `
 【LINE / 家庭 Context】
@@ -678,41 +715,74 @@ ${toolInstruction}
    * =======================================================
    * Gemini
    * =======================================================
+   *
+   * 重要：
+   *
+   * AI Core 不再直接持有固定 Gemini Client。
+   *
+   * 所有真正的 Gemini 呼叫都交給：
+   *
+   * geminiApiManager.execute()
+   *
+   * Manager 負責：
+   *
+   * Primary
+   * ↓
+   * Key / 額度 / 限流 / 授權異常
+   * ↓
+   * 暫時標記
+   * ↓
+   * Backup
+   *
+   * 因此這裡不需要自行判斷 429。
+   * =======================================================
    */
 
   console.log(
-  '[AI Core Debug] 開始呼叫 Gemini',
-);
+    '[AI Core Debug] 開始呼叫 Gemini',
+  );
+
+
   const response =
-    await gemini.models.generateContent(
-      {
-        model,
+    await apiManager.execute(
+      async (
+        gemini,
+      ) => {
 
-        contents:
-          prompt,
+        return gemini.models.generateContent(
+          {
+            model,
 
-        config: {
-          systemInstruction:
-            SYSTEM_INSTRUCTION,
+            contents:
+              prompt,
 
-          ...(googleSearchTools.length > 0
-            ? {
-                tools:
-                  googleSearchTools,
-              }
-            : {}),
-        },
+            config: {
+              systemInstruction:
+                SYSTEM_INSTRUCTION,
+
+              ...(googleSearchTools.length > 0
+                ? {
+                    tools:
+                      googleSearchTools,
+                  }
+                : {}),
+            },
+          },
+        );
       },
     );
-console.log(
-  '[AI Core Debug] Gemini 已返回',
-);
+
+
+  console.log(
+    '[AI Core Debug] Gemini 已返回',
+  );
+
 
   /*
    * =======================================================
    * 取得回答
    * =======================================================
-   */
+ */
 
   const text =
     response.text?.trim();
@@ -722,7 +792,7 @@ console.log(
    * =======================================================
    * 空回答保護
    * =======================================================
-   */
+ */
 
   if (!text) {
 
