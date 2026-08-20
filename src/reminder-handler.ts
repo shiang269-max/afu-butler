@@ -32,7 +32,7 @@ import {
  * 4. 查詢：全部／今天／明天／這週／這個月
  * 5. 查詢後可直接使用編號操作
  * 6. 單筆取消／修改
- * 7. 批次全部取消＋最後確認
+ * 7. 多筆取消／修改
  * 8. 建立人／被提醒者取消權限
  * 9. 重複 Reminder 偵測＋確認
  * 10. 保留舊 createReminderFromMessage API
@@ -79,7 +79,6 @@ interface ReminderParseResult {
   updateRemindAt?: string;
   updateContent?: string;
   updateTarget: 'self' | 'all' | string | null;
-  cancelAll?: boolean;
 }
 
 export interface ReminderHandlerResult {
@@ -234,11 +233,11 @@ none = 不是 Reminder 操作
 「取消下午三點的提醒」
 「取消第4個」
 「幫我把4取消」
-「今天全部取消」
-「把今天所有提醒都取消」
 
-如果明確表示全部取消，cancelAll=true。
-如果只是指定某一道，cancelAll=false。
+多筆取消可以直接指定多個編號，例如：
+「1 2取消」／「1.2取消」／「1、2取消」。
+
+不要把「全部取消」當成特殊的一次完成操作；若使用者要撤掉多筆，先列出候選並由使用者指定編號。
 
 【UPDATE】
 可以修改時間、內容、對象：
@@ -584,9 +583,6 @@ function applyReminderNaturalLanguageHints(
       text.replace(/\d{1,2}[:：]\d{2}/g, ''),
     );
 
-  const hasExplicitAllWords =
-    /全部|所有|都|全撤|全取消/.test(text);
-
   const contentProbe = text
     .replace(/取消|撤掉|撤銷|不要|提醒|提示|幫我|幫忙|請|的|那個|那道|全部|所有|都/g, '')
     .replace(/今天|明天|後天|這週|本週|這星期|本星期|這個月|本月/g, '')
@@ -598,27 +594,12 @@ function applyReminderNaturalLanguageHints(
   const hasContentSelector =
     /[\u4e00-\u9fffA-Za-z]/.test(contentProbe);
 
-  const cancelAll =
-    action === 'cancel' &&
-    (
-      parsed.cancelAll === true ||
-      hasExplicitAllWords ||
-      (
-        !explicitTime &&
-        !hasNumberSelector &&
-        !hasContentSelector &&
-        queryPeriod !== 'all' &&
-        /取消|撤掉|撤銷|不要/.test(text)
-      )
-    );
-
   return {
     ...parsed,
     action,
     remindAt:
       explicitTime || parsed.remindAt,
     queryPeriod,
-    cancelAll,
   };
 }
 
@@ -780,8 +761,6 @@ async function parseReminder(
           : undefined,
       updateTarget:
         normalizeTarget(parsed.updateTarget),
-      cancelAll:
-        parsed.cancelAll === true,
     };
 
     return applyReminderNaturalLanguageHints(
@@ -1585,6 +1564,10 @@ function isNo(text: string): boolean {
 function extractCandidateIndices(
   text: string,
   candidates: Reminder[],
+  options: {
+    matchByTime?: boolean;
+    strictNumericSelectors?: boolean;
+  } = {},
 ): number[] {
   const normalized = text.trim();
   const indices = new Set<number>();
@@ -1603,6 +1586,24 @@ function extractCandidateIndices(
   };
 
   for (const [word, index] of Object.entries(numberMap)) {
+    /*
+     * 混合操作的 selector 可能包含時間，例如：
+     * 「17:30，2」
+     *
+     * 嚴格模式下不能用 includes('1') / includes('7')
+     * 這種方式從時間數字誤判候選；真正的編號會在
+     * remove-times 後由下面的 arabicMatches 處理。
+     */
+    const isBareNumericSelector =
+      /^(?:10|[1-9])$/.test(word);
+
+    if (
+      options.strictNumericSelectors &&
+      isBareNumericSelector
+    ) {
+      continue;
+    }
+
     if (
       normalized.includes(word) &&
       index < candidates.length
@@ -1652,20 +1653,43 @@ function extractCandidateIndices(
     }
   }
 
-  const explicitTime =
-    extractExplicitReminderTime(normalized);
+  /*
+   * 一般自然語言查詢可以用「時間」反查候選。
+   *
+   * 但混合編號操作不能使用這個 fallback。
+   *
+   * 例如：
+   *   「1改17:30，2取消」
+   *
+   * 第二個操作的 selectorText 是：
+   *   「17:30，2」
+   *
+   * 如果這裡用時間反查，17:30 會把原本 17:00 的第 1 道
+   * 也加入候選，最後就會變成：
+   *
+   *   update -> 1
+   *   cancel -> 1、2
+   *
+   * 這正是「同一道提醒不能同時修改又取消」誤判的來源。
+   *
+   * 因此只有明確允許時才進行時間匹配。
+   */
+  if (options.matchByTime !== false) {
+    const explicitTime =
+      extractExplicitReminderTime(normalized);
 
-  if (explicitTime) {
-    const targetTime = new Date(explicitTime).getTime();
-    if (!Number.isNaN(targetTime)) {
-      for (let index = 0; index < candidates.length; index += 1) {
-        const reminderTime =
-          new Date(candidates[index].remindAt).getTime();
-        if (
-          !Number.isNaN(reminderTime) &&
-          Math.abs(reminderTime - targetTime) <= 60 * 1000
-        ) {
-          indices.add(index);
+    if (explicitTime) {
+      const targetTime = new Date(explicitTime).getTime();
+      if (!Number.isNaN(targetTime)) {
+        for (let index = 0; index < candidates.length; index += 1) {
+          const reminderTime =
+            new Date(candidates[index].remindAt).getTime();
+          if (
+            !Number.isNaN(reminderTime) &&
+            Math.abs(reminderTime - targetTime) <= 60 * 1000
+          ) {
+            indices.add(index);
+          }
         }
       }
     }
@@ -1686,6 +1710,7 @@ function resolveCandidateIndex(
 
 function containsUpdateIntent(text: string): boolean {
   return [
+    '改',
     '改成',
     '改為',
     '修改',
@@ -1896,6 +1921,92 @@ function buildCancelResult(
   };
 }
 
+/* =========================================================
+ * 明確修改指令的本地解析
+ * =========================================================
+ *
+ * 目的：
+ *   「1改成23:30」
+ *   「1改成吃藥」
+ *   「1改成晚上10點吃藥」
+ *   「1 2改成10點」
+ *
+ * 這類指令資訊已經足夠明確，不需要再交給 Gemini。
+ * 只有本地解析無法確認修改內容時，呼叫端才 fallback 到 Gemini。
+ */
+function parseLocalExplicitUpdate(
+  message: string,
+): {
+  remindAt?: string;
+  content?: string;
+} | null {
+  const text = message.trim();
+
+  const operationMatch = text.match(
+    /(?:改成|改為|修改|改一下|換成|變成|改)/,
+  );
+
+  if (!operationMatch || operationMatch.index === undefined) {
+    return null;
+  }
+
+  let remainder = text
+    .slice(
+      operationMatch.index + operationMatch[0].length,
+    )
+    .trim();
+
+  if (!remainder) {
+    return null;
+  }
+
+  const remindAt =
+    extractExplicitReminderTime(remainder);
+
+  if (remindAt) {
+    remainder = remainder
+      .replace(
+        /(?:後天|明天|今天)?\s*(?:上午|早上|下午|晚上|凌晨)?\s*\d{1,2}[:：]\d{2}/,
+        ' ',
+      )
+      .replace(
+        /(?:後天|明天|今天)?\s*(?:上午|早上|下午|晚上|凌晨)?\s*\d{1,2}\s*點(?:[：:]?\s*\d{1,2}\s*分?)?/,
+        ' ',
+      )
+      .replace(/^(?:今天|明天|後天)\s*/, '')
+      .trim();
+  }
+
+  const content = remainder
+    .replace(/^[，,、。；;:\s]+/, '')
+    .replace(/[，,、。；;]+$/, '')
+    .trim();
+
+  if (!remindAt && !content) {
+    return null;
+  }
+
+  return {
+    remindAt,
+    content: content || undefined,
+  };
+}
+
+function buildLocalUpdateRequest(
+  message: string,
+): ReturnType<typeof buildUpdateRequest> | null {
+  const local = parseLocalExplicitUpdate(message);
+
+  if (!local) {
+    return null;
+  }
+
+  return {
+    remindAt: local.remindAt,
+    content: local.content,
+  };
+}
+
 function buildUpdateRequest(
   parsed: ReminderParseResult,
   message: string,
@@ -1982,14 +2093,280 @@ function applyReminderUpdate(
  * Pending Confirmation
  * ========================================================= */
 
+
+interface MixedReminderOperation {
+  action: 'cancel' | 'update';
+  indices: number[];
+  text: string;
+}
+
+/*
+ * 從同一則訊息拆出「哪幾道做什麼」。
+ *
+ * 例如：
+ *   「1改成10點，2取消」
+ *   「1 2改成10點，3 4取消」
+ *   「1改成10點 2改成11點」
+ *
+ * 每一段都只負責自己的編號，因此不會再把整句訊息的
+ * update 時間錯套到另一道 Reminder。
+ */
+function operationWordIsUpdatePlaceholder(
+  operationWord: string,
+): boolean {
+  return (
+    operationWord === '改' ||
+    operationWord === '改成' ||
+    operationWord === '改為' ||
+    operationWord === '修改' ||
+    operationWord === '改一下' ||
+    operationWord === '換成' ||
+    operationWord === '變成'
+  );
+}
+
+/*
+ * 去掉 update operation 尾端屬於下一個 operation 的候選編號。
+ *
+ * 只處理「編號 + 分隔符 + 結尾」這種明確形式，
+ * 不碰正常文字內容，避免把「吃藥2」這類合法內容誤刪。
+ */
+function stripTrailingCandidateSelector(
+  operationText: string,
+  candidates: Reminder[],
+): string {
+  let text = operationText.trim();
+
+  if (!text || !candidates.length) {
+    return text;
+  }
+
+  const maxIndex = Math.min(candidates.length, 10);
+
+  /*
+   * 「改成15:30，2」／「改成10點 2」
+   * 「改成10點、2」
+   */
+  const trailing = text.match(
+    /(?:[，,、；;。]|\s+)\s*(10|[1-9])\s*$/,
+  );
+
+  if (!trailing) {
+    return text;
+  }
+
+  const number = Number(trailing[1]);
+
+  if (number < 1 || number > maxIndex) {
+    return text;
+  }
+
+  return text
+    .slice(0, trailing.index)
+    .trim();
+}
+
+function extractMixedReminderOperations(
+  message: string,
+  candidates: Reminder[],
+): MixedReminderOperation[] {
+  const operationPattern =
+    /改成|改為|修改|改一下|換成|變成|改|取消|撤掉|撤銷|不要/g;
+
+  const matches = [
+    ...message.matchAll(operationPattern),
+  ];
+
+  if (!matches.length) {
+    return [];
+  }
+
+  const operations: MixedReminderOperation[] = [];
+
+  for (let index = 0; index < matches.length; index += 1) {
+    const current = matches[index];
+    const currentStart =
+      current.index ?? 0;
+
+    const previousEnd =
+      index === 0
+        ? 0
+        : (
+            (matches[index - 1].index ?? 0) +
+            matches[index - 1][0].length
+          );
+
+    const nextStart =
+      index + 1 < matches.length
+        ? (matches[index + 1].index ?? message.length)
+        : message.length;
+
+    /*
+     * 編號在操作詞之前：
+     *   「1 2改成10點 3 4取消」
+     *
+     * 因此第 1 段的編號取 0～「改成」之前，
+     * 第 2 段的編號取「改成」之後～「取消」之前。
+     *
+     * 注意：這裡的 selector 只認「編號」，不能再用操作段落中的
+     * 時間反推候選；否則「17:30，2」會把 17:00 的第 1 道誤抓進來。
+     */
+    const selectorText =
+      message
+        .slice(
+          previousEnd,
+          currentStart,
+        )
+        .trim();
+
+    const selectedIndices =
+      extractCandidateIndices(
+        selectorText,
+        candidates,
+        {
+          /*
+           * 混合操作的 selector 已經是明確的編號區段。
+           * 禁止用其中的時間再次反查 Reminder，
+           * 避免「17:30，2」把第 1 道一起抓進取消候選。
+           */
+          matchByTime: false,
+          strictNumericSelectors: true,
+        },
+      );
+
+    if (!selectedIndices.length) {
+      continue;
+    }
+
+    const operationWord = current[0];
+
+    /*
+     * Update 的解析只需要「改成什麼」，
+     * 因此從操作詞開始取到下一個操作詞即可。
+     * 這避免把前一段的時間一起交給 Parser。
+     */
+    /*
+     * operationText 只保留「這一段操作真正要改成的內容」。
+     *
+     * 例如：
+     *   「1改成15:30，2取消」
+     *
+     * 第一段原本若直接取到下一個操作詞，會得到
+     *   「改成15:30，2」
+     * local parser 會把「2」誤認成新的內容。
+     *
+     * 因此 update 段落在送進 local parser 前，必須把下一段
+     * 操作的編號選擇器剝掉。
+     */
+    let operationText =
+      message
+        .slice(
+          currentStart,
+          nextStart,
+        )
+        .trim();
+
+    if (
+      operationWordIsUpdatePlaceholder(current[0])
+    ) {
+      operationText =
+        stripTrailingCandidateSelector(
+          operationText,
+          candidates,
+        );
+    }
+
+    operations.push({
+      action:
+        operationWord === '取消' ||
+        operationWord === '撤掉' ||
+        operationWord === '撤銷' ||
+        operationWord === '不要'
+          ? 'cancel'
+          : 'update',
+      indices: selectedIndices,
+      text: operationText,
+    });
+  }
+
+  return operations;
+}
+
+function mergeUniqueReminderIndices(
+  operations: MixedReminderOperation[],
+): number[] {
+  return [
+    ...new Set(
+      operations.flatMap(
+        (operation) => operation.indices,
+      ),
+    ),
+  ].sort((a, b) => a - b);
+}
+
+function buildMixedOperationResult(
+  updated: Reminder[],
+  cancelled: Reminder[],
+): ReminderHandlerResult {
+  const messages: string[] = [];
+
+  if (updated.length) {
+    messages.push(
+      updated.length === 1
+        ? `已修改：${formatReminderTime(updated[0].remindAt)}｜${updated[0].content}`
+        : `已修改 ${updated.length} 道提醒：\n${updated
+            .map(
+              (reminder) =>
+                `・${formatReminderTime(reminder.remindAt)}｜${reminder.content}`,
+            )
+            .join('\n')}`,
+    );
+  }
+
+  if (cancelled.length) {
+    messages.push(
+      cancelled.length === 1
+        ? `已撤下：${formatReminderTime(cancelled[0].remindAt)}｜${cancelled[0].content}`
+        : `已撤下 ${cancelled.length} 道提醒：\n${cancelled
+            .map(
+              (reminder) =>
+                `・${formatReminderTime(reminder.remindAt)}｜${reminder.content}`,
+            )
+            .join('\n')}`,
+    );
+  }
+
+  return {
+    handled: true,
+    action: updated.length ? 'update' : 'cancel',
+    updated: updated.length > 0,
+    cancelled: cancelled.length > 0,
+    candidates: [
+      ...updated,
+      ...cancelled,
+    ],
+    message: messages.join('\n'),
+  };
+}
+
 async function handlePendingState(
   message: string,
   createdByUserId: string,
   groupId: string,
   gemini: GoogleGenAI,
+  requestVersion: number,
 ): Promise<ReminderHandlerResult | null> {
   const conversationKey =
     `${groupId}:${createdByUserId}`;
+
+  if (
+    !isCurrentReminderRequest(
+      conversationKey,
+      requestVersion,
+    )
+  ) {
+    return null;
+  }
 
   const pending = getPendingReminderState(
     conversationKey,
@@ -2010,6 +2387,9 @@ async function handlePendingState(
       (reminder): reminder is Reminder =>
         reminder !== undefined,
     );
+
+  /* 保留完整候選清單；混合操作的編號永遠以這份清單為準。 */
+  const candidatePool = candidates;
 
   if (!candidates.length) {
     clearPendingReminderState(conversationKey);
@@ -2049,12 +2429,258 @@ async function handlePendingState(
       return null;
     }
 
-    if (cancelIntent && selectedIndices.length) {
-      if (candidates.every((reminder) =>
-        canManageReminder(reminder, createdByUserId),
-      )) {
-        clearPendingReminderState(conversationKey);
-        return buildCancelResult(candidates);
+    /*
+     * 同一則訊息可以同時包含修改與取消。
+     *
+     * 先拆成各自的操作段落，再逐段執行。
+     * 這也同時支援：
+     *   「1 2改成10點」
+     *   「1改成10點，2取消」
+     *   「1改成10點，2改成11點」
+     */
+    const mixedOperations =
+      extractMixedReminderOperations(
+        message,
+        candidatePool,
+      );
+
+    const hasMixedOperation =
+      mixedOperations.some(
+        (operation) => operation.action === 'cancel',
+      ) &&
+      mixedOperations.some(
+        (operation) => operation.action === 'update',
+      );
+
+    console.log(
+      '[Reminder Mixed Debug]',
+      JSON.stringify(
+        mixedOperations.map((operation) => ({
+          action: operation.action,
+          indices: operation.indices,
+          text: operation.text,
+        })),
+      ),
+    );
+
+    if (
+      selectedIndices.length &&
+      (
+        hasMixedOperation ||
+        mixedOperations.length > 1 ||
+        updateIntent
+      )
+    ) {
+      const operatedIndices =
+        mergeUniqueReminderIndices(
+          mixedOperations,
+        );
+
+      /*
+       * 如果只有單純的「1 2改成10點」，mixed parser
+       * 會得到一個 update operation；如果 parser 因
+       * 中文語序沒有拆出操作段落，退回原本的單一
+       * update 流程。
+       */
+      if (
+        mixedOperations.length > 0 &&
+        operatedIndices.length > 0
+      ) {
+        const operatedReminders =
+          operatedIndices
+            .map((index) => candidatePool[index])
+            .filter(
+              (reminder): reminder is Reminder =>
+                reminder !== undefined,
+            );
+
+        if (
+          operatedReminders.some(
+            (reminder) =>
+              !canManageReminder(
+                reminder,
+                createdByUserId,
+              ),
+          )
+        ) {
+          clearPendingReminderState(
+            conversationKey,
+          );
+
+          return {
+            handled: true,
+            action: 'authorization-confirmation',
+            candidates: operatedReminders,
+            message:
+              '主上，這次同時包含修改與取消，而且其中有需要授權的提醒。為避免只執行一半，請先分開處理需要授權的提醒。',
+          };
+        }
+
+        /*
+         * 先完整解析／驗證所有 update，確認整句操作可以成立後，
+         * 才開始任何 cancel / update 寫入。
+         *
+         * 這是混合操作的原子性邊界：
+         * 「1改成10點，2取消」不能先撤2，再因為1的解析失敗而只剩取消。
+         */
+        const preparedUpdates: Array<{
+          reminder: Reminder;
+          updates: ReturnType<typeof buildUpdateRequest>;
+        }> = [];
+        const cancelReminders: Reminder[] = [];
+        const usedIndices = new Set<number>();
+
+        for (const operation of mixedOperations) {
+          for (const candidateIndex of operation.indices) {
+            if (usedIndices.has(candidateIndex)) {
+              return {
+                handled: true,
+                action: 'selection-confirmation',
+                candidates: operatedReminders,
+                message:
+                  '主上，同一道提醒不能在同一句裡同時修改又取消。請把兩個操作分開說。',
+              };
+            }
+
+            usedIndices.add(candidateIndex);
+
+            const reminder = candidatePool[candidateIndex];
+            if (!reminder) continue;
+
+            if (operation.action === 'cancel') {
+              cancelReminders.push(reminder);
+              continue;
+            }
+
+            let updates =
+              buildLocalUpdateRequest(
+                operation.text,
+              );
+
+            /*
+             * 明確的編號修改已在本地完成解析。
+             * 只有本地無法判斷修改內容時，才 fallback 到 Gemini。
+             */
+            if (!updates) {
+              const parsedUpdate = await parseReminder(
+                operation.text,
+                gemini,
+              );
+
+              if (!isCurrentReminderRequest(
+                conversationKey,
+                requestVersion,
+              )) {
+                return null;
+              }
+
+              updates = buildUpdateRequest(
+                parsedUpdate,
+                operation.text,
+                createdByUserId,
+              );
+            }
+
+            if (!hasActualUpdateRequest(updates)) {
+              return {
+                handled: true,
+                action: 'update',
+                updated: false,
+                cancelled: false,
+                candidates: operatedReminders,
+                message:
+                  '主上，奴才知道要處理哪些提醒，但其中一段沒有聽清楚要改成什麼。這次沒有撤下或修改任何一道提醒。',
+              };
+            }
+
+            preparedUpdates.push({
+              reminder,
+              updates,
+            });
+          }
+        }
+
+        if (!isCurrentReminderRequest(
+          conversationKey,
+          requestVersion,
+        )) {
+          return null;
+        }
+
+        const updated: Reminder[] = [];
+        const cancelled: Reminder[] = [];
+
+        /* 所有解析成功後，才進入實際寫入階段。 */
+        for (const item of preparedUpdates) {
+          const updatedReminder = applyReminderUpdate(
+            item.reminder,
+            item.updates,
+          );
+
+          if (!updatedReminder) {
+            return {
+              handled: true,
+              action: 'update',
+              updated: false,
+              cancelled: false,
+              candidates: operatedReminders,
+              message:
+                '主上，奴才驗證修改結果時發現有一道沒有成功。為避免只做一半，這次沒有撤下或修改任何一道提醒。',
+            };
+          }
+
+          updated.push(updatedReminder);
+        }
+
+        for (const reminder of cancelReminders) {
+          if (cancelReminder(reminder.id)) {
+            cancelled.push(reminder);
+          } else {
+            return {
+              handled: true,
+              action: 'cancel',
+              updated: false,
+              cancelled: false,
+              candidates: operatedReminders,
+              message:
+                '主上，奴才在撤下其中一道提醒時遇到問題。為避免誤報結果，這次不回報為完整成功。',
+            };
+          }
+        }
+
+        clearPendingReminderState(
+          conversationKey,
+        );
+
+        return buildMixedOperationResult(
+          updated,
+          cancelled,
+        );
+      }
+    }
+
+    /*
+     * 純取消：保留原本的多筆取消流程。
+     */
+    if (
+      cancelIntent &&
+      selectedIndices.length
+    ) {
+      if (
+        candidates.every(
+          (reminder) =>
+            canManageReminder(
+              reminder,
+              createdByUserId,
+            ),
+        )
+      ) {
+        clearPendingReminderState(
+          conversationKey,
+        );
+        return buildCancelResult(
+          candidates,
+        );
       }
 
       const authorizationUsers =
@@ -2092,64 +2718,166 @@ async function handlePendingState(
       };
     }
 
-    if (updateIntent && selectedIndices.length) {
-      const selected = candidates[0];
-      const parsedUpdate = await parseReminder(
-        message,
-        gemini,
-      );
-
-      if (!canManageReminder(selected, createdByUserId)) {
-        clearPendingReminderState(conversationKey);
-        setAuthorizationPendingStates(
-          [selected],
-          groupId,
-          'update',
+    /*
+     * 純修改：現在允許一次指定多道 Reminder。
+     * 所有選取的 Reminder 都套用同一個修改內容。
+     */
+    if (
+      updateIntent &&
+      selectedIndices.length
+    ) {
+      const selected =
+        selectedIndices.map(
+          (index) => candidates[index],
         );
+
+      const unauthorizedSelected =
+        selected.filter(
+          (reminder) =>
+            !canManageReminder(
+              reminder,
+              createdByUserId,
+            ),
+        );
+
+      if (unauthorizedSelected.length) {
+        clearPendingReminderState(
+          conversationKey,
+        );
+
+        /*
+         * 多筆修改的授權確認目前只安全支援單筆，
+         * 避免確認後無法正確知道每一道 Reminder 的
+         * 修改內容。多筆中若有未授權項目，要求拆開處理。
+         */
+        if (selected.length > 1) {
+          return {
+            handled: true,
+            action: 'authorization-confirmation',
+            candidates: selected,
+            message:
+              '主上，這次多筆修改中有需要授權的提醒。為避免只修改其中一部分，請分開指定每一道提醒修改。',
+          };
+        }
+
+        const authorizationUsers =
+          setAuthorizationPendingStates(
+            selected,
+            groupId,
+            'update',
+            message,
+          );
+
+        if (!authorizationUsers.length) {
+          return {
+            handled: true,
+            action: 'authorization-confirmation',
+            candidates: selected,
+            message:
+              '主上，這道提醒沒有可確認的授權人，奴才不敢擅自修改。',
+          };
+        }
+
         return {
           handled: true,
           action: 'authorization-confirmation',
-          candidates: [selected],
+          candidates: selected,
           message:
-            `主上，這道提醒需要建立人或被提醒的人確認修改。請由「${authorizationText([selected])}」其中一人回覆「同意」。`,
+            `主上，這道提醒需要建立人或被提醒者確認修改。請由「${authorizationText(selected)}」其中一人回覆「同意」。`,
           mentionUserIds:
-            getCommonAuthorizedUsers([selected]),
+            authorizationUsers,
         };
       }
 
-      const updates = buildUpdateRequest(
-        parsedUpdate,
-        message,
-        createdByUserId,
-      );
+      let updates =
+        buildLocalUpdateRequest(
+          message,
+        );
 
-      const updated = applyReminderUpdate(
-        selected,
-        updates,
-      );
+      /*
+       * 明確的「編號＋修改」不再等待 Gemini。
+       * 本地無法解析時才 fallback。
+       */
+      if (!updates) {
+        const parsedUpdate =
+          await parseReminder(
+            message,
+            gemini,
+          );
 
-      if (updated) {
-        clearPendingReminderState(conversationKey);
+        updates =
+          buildUpdateRequest(
+            parsedUpdate,
+            message,
+            createdByUserId,
+          );
+      }
+
+      if (
+        !hasActualUpdateRequest(
+          updates,
+        )
+      ) {
         return {
           handled: true,
           action: 'update',
-          updated: true,
-          reminderId: updated.id,
-          remindAt: updated.remindAt,
-          content: updated.content,
-          target: updated.target,
+          updated: false,
+          candidates: selected,
           message:
-            `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
+            '主上，奴才知道您要改哪幾道了，但還沒聽清楚要改成什麼時間或內容。',
+        };
+      }
+
+      const updated: Reminder[] = [];
+
+      for (
+        const reminder of selected
+      ) {
+        const updatedReminder =
+          applyReminderUpdate(
+            reminder,
+            updates,
+          );
+
+        if (updatedReminder) {
+          updated.push(
+            updatedReminder,
+          );
+        }
+      }
+
+      clearPendingReminderState(
+        conversationKey,
+      );
+
+      if (
+        updated.length !== selected.length
+      ) {
+        return {
+          handled: true,
+          action: 'update',
+          updated: false,
+          candidates: selected,
+          message:
+            `主上，這次指定 ${selected.length} 道提醒，但實際成功修改 ${updated.length} 道。奴才沒有把未成功的提醒當成已修改。`,
         };
       }
 
       return {
         handled: true,
         action: 'update',
-        updated: false,
-        candidates: [selected],
+        updated: true,
+        candidates: updated,
+        reminders: updated,
         message:
-          '主上，奴才知道您要改哪一道了，但還沒聽清楚要改成什麼時間或內容。',
+          updated.length === 1
+            ? `喳，已替主上把「${updated[0].content}」提醒改成 ${formatReminderTime(updated[0].remindAt)}。`
+            : `喳，已替主上修改 ${updated.length} 道提醒：\n${updated
+                .map(
+                  (reminder) =>
+                    `・${formatReminderTime(reminder.remindAt)}｜${reminder.content}`,
+                )
+                .join('\n')}`,
       };
     }
   }
@@ -2318,16 +3046,24 @@ async function handlePendingState(
 
       const originalRequest =
         pending.originalRequest || '';
-      const parsedUpdate = await parseReminder(
-        originalRequest,
-        gemini,
-      );
 
-      const updates = buildUpdateRequest(
-        parsedUpdate,
-        originalRequest,
-        createdByUserId,
-      );
+      let updates =
+        buildLocalUpdateRequest(
+          originalRequest,
+        );
+
+      if (!updates) {
+        const parsedUpdate = await parseReminder(
+          originalRequest,
+          gemini,
+        );
+
+        updates = buildUpdateRequest(
+          parsedUpdate,
+          originalRequest,
+          createdByUserId,
+        );
+      }
 
       const updated =
         candidates.length === 1
@@ -2534,7 +3270,7 @@ function handleList(
 
   /*
    * 查詢結果本身就是下一輪操作的候選清單。
-   * action 先使用 cancel 作為相容值，真正下一句若包含
+   * action 使用 cancel 作為相容值；真正下一句若包含
    * 「改成／修改」會在 Pending Handler 中切換成 update。
    */
   setPendingReminderState({
@@ -2583,58 +3319,6 @@ function handleCancel(
     reminders,
     parsed,
   );
-
-  if (parsed.cancelAll) {
-    if (!reminders.length) {
-      return {
-        handled: true,
-        action: 'cancel',
-        cancelled: false,
-        message:
-          '主上，目前沒有符合條件的有效 Reminder。',
-      };
-    }
-
-    const authorizationUsers =
-      setAuthorizationPendingStates(
-        reminders,
-        groupId,
-        'cancel',
-      );
-
-    if (!authorizationUsers.length) {
-      return {
-        handled: true,
-        action: 'authorization-confirmation',
-        candidates: reminders,
-        message:
-          '主上，這批提醒沒有共同的授權人，為避免誤撤其他人的提醒，請分開指定取消。',
-      };
-    }
-
-    const lines = reminders.map(
-      (reminder, index) =>
-        `${index + 1}. ${formatReminderTime(reminder.remindAt)}｜@${formatTargetList(reminder)}｜${reminder.content}`,
-    );
-
-    const periodText: Record<QueryPeriod, string> = {
-      all: '目前',
-      today: '今日',
-      tomorrow: '明日',
-      week: '本週',
-      month: '本月',
-    };
-
-    return {
-      handled: true,
-      action: 'authorization-confirmation',
-      candidates: reminders,
-      message:
-        `主上，${periodText[parsed.queryPeriod || 'all']}共有 ${reminders.length} 道提醒：\n${lines.join('\n')}\n\n確定全部撤掉嗎？請由「${authorizationText(reminders)}」其中一人回覆「同意」。`,
-      mentionUserIds:
-        authorizationUsers,
-    };
-  }
 
   if (!reminders.length) {
     return {
@@ -2799,7 +3483,7 @@ function handleUpdate(
 
   const updates = buildUpdateRequest(
     parsed,
-    '',
+    originalRequest,
     createdByUserId,
   );
 
@@ -2829,6 +3513,38 @@ function handleUpdate(
     message:
       `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
   };
+}
+
+/* =========================================================
+ * Reminder Request Supersession
+ * =========================================================
+ *
+ * Gemini 解析可能比下一則 LINE 訊息晚很多才返回。
+ * 同一個 conversation 如果使用者已經送出更新的指令，
+ * 舊請求即使之後完成，也不得再修改 Reminder。
+ */
+const reminderRequestVersions = new Map<string, number>();
+
+function beginReminderRequest(conversationKey: string): number {
+  const nextVersion =
+    (reminderRequestVersions.get(conversationKey) || 0) + 1;
+
+  reminderRequestVersions.set(
+    conversationKey,
+    nextVersion,
+  );
+
+  return nextVersion;
+}
+
+function isCurrentReminderRequest(
+  conversationKey: string,
+  requestVersion: number,
+): boolean {
+  return (
+    reminderRequestVersions.get(conversationKey) ===
+    requestVersion
+  );
 }
 
 /* =========================================================
@@ -2882,6 +3598,10 @@ export async function handleReminderMessage(
   const conversationKey =
     `${groupId}:${createdByUserId}`;
 
+  /* 每一則新訊息都使同一對話中的舊非同步請求失效。 */
+  const requestVersion =
+    beginReminderRequest(conversationKey);
+
   /*
    * 正式 Reminder 指令與上下文 Follow-up 是兩種不同模式：
    *
@@ -2904,6 +3624,52 @@ export async function handleReminderMessage(
   const pending =
     getPendingReminderState(conversationKey);
 
+  /*
+   * 有呼叫詞 + 明確編號操作時，若上一輪剛建立 Reminder 候選，
+   * 仍必須允許這個編號操作承接上一輪候選。
+   *
+   * 例如：
+   *   「喳子所有提醒」
+   *   「喳子1取消」
+   *   「喳子1 2 3取消」
+   *
+   * 原本只在 !hasInvocation 時承接 Pending，導致上面的正式呼叫
+   * 被重新送進 Gemini 解析；多筆空白分隔編號尤其容易被判成 list，
+   * 因而重新列出提醒而沒有執行取消。
+   *
+   * 這裡只放行「明確候選編號 + 取消/修改」的情況，不讓一般的
+   * 「喳子」或自然語言新指令被舊 Pending State 攔截。
+   */
+  if (
+    hasInvocation &&
+    pending &&
+    hasExplicitCandidateSelector(normalizedMessage) &&
+    (
+      containsCancelIntent(normalizedMessage) ||
+      containsUpdateIntent(normalizedMessage)
+    )
+  ) {
+    const pendingResult =
+      await handlePendingState(
+        normalizedMessage,
+        createdByUserId,
+        groupId,
+        gemini,
+        requestVersion,
+      );
+
+    if (!isCurrentReminderRequest(
+      conversationKey,
+      requestVersion,
+    )) {
+      return { handled: false };
+    }
+
+    if (pendingResult) {
+      return pendingResult;
+    }
+  }
+
   if (!hasInvocation && pending) {
     const normalized = normalizedMessage;
     const looksLikePendingResponse =
@@ -2920,7 +3686,15 @@ export async function handleReminderMessage(
           createdByUserId,
           groupId,
           gemini,
+          requestVersion,
         );
+
+      if (!isCurrentReminderRequest(
+        conversationKey,
+        requestVersion,
+      )) {
+        return { handled: false };
+      }
 
       if (pendingResult) {
         /*
@@ -2970,6 +3744,13 @@ export async function handleReminderMessage(
           gemini,
         );
     } catch (error) {
+      if (!isCurrentReminderRequest(
+        conversationKey,
+        requestVersion,
+      )) {
+        return { handled: false };
+      }
+
       console.error(
         '[Reminder Handler] Reminder 解析失敗:',
         error,
@@ -2982,11 +3763,25 @@ export async function handleReminderMessage(
       };
     }
 
+    if (!isCurrentReminderRequest(
+      conversationKey,
+      requestVersion,
+    )) {
+      return { handled: false };
+    }
+
     parsed =
       applyReminderNaturalLanguageHints(
         parsed,
         normalizedMessage,
       );
+
+    if (!isCurrentReminderRequest(
+      conversationKey,
+      requestVersion,
+    )) {
+      return { handled: false };
+    }
 
     if (parsed.action !== 'none') {
       /* 新正式指令取代舊 Pending State。 */
