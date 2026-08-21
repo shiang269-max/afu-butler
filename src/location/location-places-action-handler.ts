@@ -22,9 +22,10 @@
  *
  * 1. 接收 Location Intent Action
  * 2. 取得對應 LocationRecord
- * 3. 將座標交給 Google Places Service
- * 4. 回傳標準化搜尋結果
- * 5. Google Places 失敗時安全停止
+ * 3. 從使用者原句解析可明確判斷的搜尋條件
+ * 4. 將座標與搜尋條件交給 Google Places Service
+ * 5. 回傳標準化搜尋結果
+ * 6. Google Places 失敗時安全停止
  *
  * 本模組不負責：
  *
@@ -52,18 +53,13 @@ import {
   searchNearbyPlaces,
   GooglePlaceResult,
   GooglePlacesSearchOptions,
+  GooglePlacesSearchType,
 } from './google-places-service';
 
 import {
   LocationRecord,
 } from './location-types';
 
-
-/**
- * =========================================================
- * Public Types
- * =========================================================
- */
 
 export type LocationPlacesAction =
   | 'SEARCH_NEAR_CURRENT'
@@ -82,10 +78,7 @@ export interface LocationPlacesActionRequest {
   maxResults?: number;
 
   type?:
-    | 'restaurant'
-    | 'cafe'
-    | 'food'
-    | 'store';
+    GooglePlacesSearchType;
 }
 
 
@@ -106,12 +99,6 @@ export interface LocationPlacesActionResult {
 }
 
 
-/**
- * =========================================================
- * Action Validation
- * =========================================================
- */
-
 function isSupportedAction(
   action: unknown,
 ): action is LocationPlacesAction {
@@ -127,9 +114,267 @@ function isSupportedAction(
 
 /**
  * =========================================================
- * Search Options
+ * Search Intent
+ * =========================================================
+ *
+ * 不呼叫 Gemini。
+ *
+ * 只有「可以直接從使用者文字確認」的搜尋條件
+ * 才轉成 query / type。
+ *
  * =========================================================
  */
+
+interface SearchIntent {
+  type:
+    GooglePlacesSearchType;
+
+  query?:
+    string;
+}
+
+
+function normalizeSearchMessage(
+  message: string,
+): string {
+
+  return (
+    typeof message === 'string'
+      ? message
+          .replace(/大內總管/g, '')
+          .replace(/總管/g, '')
+          .replace(/內內/g, '')
+          .replace(/喳子/g, '')
+          .replace(/渣子/g, '')
+          .replace(/[，。！？、,.!?]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+      : ''
+  );
+}
+
+
+function resolveSearchIntent(
+  message: string,
+
+  explicitType:
+    | GooglePlacesSearchType
+    | undefined,
+):
+  SearchIntent {
+
+  if (
+    explicitType
+  ) {
+
+    return {
+      type:
+        explicitType,
+    };
+  }
+
+
+  const text =
+    normalizeSearchMessage(
+      message,
+    );
+
+
+  /*
+   * ---------------------------------------------------------
+   * 咖啡廳
+   * ---------------------------------------------------------
+   */
+
+  if (
+    /咖啡廳|咖啡店|咖啡館|咖啡馆|coffee/i.test(
+      text,
+    )
+  ) {
+
+    return {
+      type:
+        'cafe',
+    };
+  }
+
+
+  /*
+   * ---------------------------------------------------------
+   * 便利商店
+   * ---------------------------------------------------------
+   */
+
+  if (
+    /便利商店|便利店|超商|7[- ]?11|seven[- ]?eleven|全家/.test(
+      text,
+    )
+  ) {
+
+    return {
+      type:
+        'convenience_store',
+    };
+  }
+
+
+  /*
+   * ---------------------------------------------------------
+   * 加油站
+   * ---------------------------------------------------------
+   *
+   * 「加氣站」不當成「加油站」，
+   * 避免兩者混在一起。
+   * ---------------------------------------------------------
+   */
+
+  if (
+    /加油站|油站/.test(
+      text,
+    )
+  ) {
+
+    return {
+      type:
+        'gas_station',
+    };
+  }
+
+
+  /*
+   * ---------------------------------------------------------
+   * 火鍋
+   * ---------------------------------------------------------
+   *
+   * 「火鍋」與「火鍋店」都會命中。
+   *
+   * 不只搜尋 restaurant，
+   * 而是：
+   *
+   * type  = restaurant
+   * query = 火鍋
+   *
+   * 讓 Google Places Text Search 真正搜尋
+   * 「火鍋」這個使用者要求的內容。
+   * ---------------------------------------------------------
+   */
+
+  if (
+    /火鍋|火锅|涮涮鍋|涮涮锅|shabu/i.test(
+      text,
+    )
+  ) {
+
+    return {
+      type:
+        'restaurant',
+
+      query:
+        '火鍋',
+    };
+  }
+
+
+  /*
+   * ---------------------------------------------------------
+   * 其他明確餐飲關鍵字
+   * ---------------------------------------------------------
+   */
+
+  const foodKeywords = [
+    '拉麵',
+    '拉面',
+    '牛肉麵',
+    '牛肉面',
+    '麵店',
+    '面店',
+    '燒肉',
+    '烧肉',
+    '漢堡',
+    '汉堡',
+    '披薩',
+    '披萨',
+    '義大利麵',
+    '意大利面',
+    '壽司',
+    '寿司',
+    '居酒屋',
+    '早餐',
+    '早午餐',
+    '甜點',
+    '甜点',
+  ];
+
+
+  const matchedFood =
+    foodKeywords.find(
+      (keyword) =>
+        text.includes(
+          keyword,
+        ),
+    );
+
+
+  if (
+    matchedFood
+  ) {
+
+    return {
+      type:
+        'restaurant',
+
+      query:
+        matchedFood,
+    };
+  }
+
+
+  /*
+   * ---------------------------------------------------------
+   * 一般餐飲需求
+   * ---------------------------------------------------------
+   */
+
+  if (
+    /餐廳|餐厅|吃飯|吃饭|吃什麼|吃什么|好吃|美食/.test(
+      text,
+    )
+  ) {
+
+    return {
+      type:
+        'restaurant',
+    };
+  }
+
+
+  /*
+   * 沒有更具體條件時，維持原本 restaurant 預設。
+   */
+
+  return {
+    type:
+      'restaurant',
+  };
+}
+
+
+function isNearestSearch(
+  message: string,
+): boolean {
+
+  const text =
+    normalizeSearchMessage(
+      message,
+    );
+
+  return (
+    /離我最近|离我最近|離你最近|离你最近|最近的/.test(
+      text,
+    )
+  );
+}
+
 
 function buildSearchOptions(
   request:
@@ -137,8 +382,43 @@ function buildSearchOptions(
 ):
   GooglePlacesSearchOptions {
 
+  const searchIntent =
+    resolveSearchIntent(
+      request.message,
+      request.type,
+    );
+
+
   const options:
-    GooglePlacesSearchOptions = {};
+    GooglePlacesSearchOptions = {
+
+    type:
+      searchIntent.type,
+
+    rankByDistance:
+      true,
+
+    /*
+     * 「離我最近」不是一般附近搜尋。
+     * 這裡直接限制為第一名，避免便利商店、加油站
+     * 等高密度 POI 因距離很接近而一次列出多家。
+     */
+    maxResults:
+      isNearestSearch(
+        request.message,
+      )
+        ? 1
+        : 5,
+  };
+
+
+  if (
+    searchIntent.query
+  ) {
+
+    options.query =
+      searchIntent.query;
+  }
 
 
   if (
@@ -161,25 +441,9 @@ function buildSearchOptions(
   }
 
 
-  if (
-    request.type !==
-    undefined
-  ) {
-
-    options.type =
-      request.type;
-  }
-
-
   return options;
 }
 
-
-/**
- * =========================================================
- * Resolve Current Location
- * =========================================================
- */
 
 function resolveCurrentLocation(
   userId: string,
@@ -200,12 +464,6 @@ function resolveCurrentLocation(
   );
 }
 
-
-/**
- * =========================================================
- * Resolve Home Location
- * =========================================================
- */
 
 function resolveHomeLocation(
   message: string,
@@ -249,23 +507,11 @@ function resolveHomeLocation(
 }
 
 
-/**
- * =========================================================
- * Main Action Handler
- * =========================================================
- */
-
 export async function handleLocationPlacesAction(
   request:
     LocationPlacesActionRequest,
 ):
   Promise<LocationPlacesActionResult> {
-
-  /*
-   * ---------------------------------------------------------
-   * 1. Action 驗證
-   * ---------------------------------------------------------
-   */
 
   if (
     !isSupportedAction(
@@ -283,12 +529,6 @@ export async function handleLocationPlacesAction(
     };
   }
 
-
-  /*
-   * ---------------------------------------------------------
-   * 2. userId 驗證
-   * ---------------------------------------------------------
-   */
 
   const userId =
     typeof request.userId === 'string'
@@ -314,23 +554,11 @@ export async function handleLocationPlacesAction(
   }
 
 
-  /*
-   * ---------------------------------------------------------
-   * 3. 搜尋選項
-   * ---------------------------------------------------------
-   */
-
   const searchOptions =
     buildSearchOptions(
       request,
     );
 
-
-  /*
-   * ---------------------------------------------------------
-   * 4. 取得搜尋中心
-   * ---------------------------------------------------------
-   */
 
   let location:
     LocationRecord |
@@ -357,12 +585,6 @@ export async function handleLocationPlacesAction(
   }
 
 
-  /*
-   * ---------------------------------------------------------
-   * 5. 沒有明確位置不得執行
-   * ---------------------------------------------------------
-   */
-
   if (
     !location
   ) {
@@ -386,12 +608,6 @@ export async function handleLocationPlacesAction(
   }
 
 
-  /*
-   * ---------------------------------------------------------
-   * 6. 建立 Places 座標
-   * ---------------------------------------------------------
-   */
-
   const coordinate = {
 
     latitude:
@@ -402,28 +618,12 @@ export async function handleLocationPlacesAction(
   };
 
 
-  /*
-   * ---------------------------------------------------------
-   * 7. Google Places
-   * ---------------------------------------------------------
-   */
-
   const placesResult =
     await searchNearbyPlaces(
       coordinate,
       searchOptions,
     );
 
-
-  /*
-   * ---------------------------------------------------------
-   * 8. Google Places 失敗
-   * ---------------------------------------------------------
-   *
-   * 不建立假店家。
-   *
-   * ---------------------------------------------------------
-   */
 
   if (
     !placesResult.ok
@@ -446,12 +646,6 @@ export async function handleLocationPlacesAction(
     };
   }
 
-
-  /*
-   * ---------------------------------------------------------
-   * 9. 成功
-   * ---------------------------------------------------------
-   */
 
   return {
     handled: true,

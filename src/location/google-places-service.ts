@@ -51,7 +51,9 @@ export type GooglePlacesSearchType =
   | 'restaurant'
   | 'cafe'
   | 'food'
-  | 'store';
+  | 'store'
+  | 'convenience_store'
+  | 'gas_station';
 
 
 export interface GooglePlaceResult {
@@ -75,6 +77,12 @@ export interface GooglePlaceResult {
 
   types: string[];
 
+  /** Google Places 回傳的主要類型，用於結果品質過濾。 */
+  primaryType?: string;
+
+  /** 加油站專用：Google 回傳的燃料種類。 */
+  fuelTypes?: string[];
+
   googleMapsUri?: string;
 }
 
@@ -85,6 +93,10 @@ export interface GooglePlacesSearchOptions {
   maxResults?: number;
 
   type?: GooglePlacesSearchType;
+
+  query?: string;
+
+  rankByDistance?: boolean;
 }
 
 
@@ -139,6 +151,56 @@ const MAX_RADIUS_METERS =
 
 const MAX_RESULTS =
   20;
+
+
+/**
+ * Google Places request timeout.
+ *
+ * 避免單次 Google API 請求長時間等待，
+ * 導致 LINE Location Handler 看起來像整個死機。
+ */
+const GOOGLE_PLACES_REQUEST_TIMEOUT_MS =
+  10000;
+
+
+/**
+ * =========================================================
+ * Development Diagnostic Trace
+ * =========================================================
+ *
+ * 目前只用於 Location / Places 實測。
+ * 不記錄 API Key。
+ * 不改變搜尋邏輯、搜尋參數或回傳結果。
+ *
+ * =========================================================
+ */
+
+const LOCATION_PLACES_DEBUG =
+  true;
+
+
+function placesDebug(
+  label: string,
+  data?: unknown,
+): void {
+
+  if (
+    !LOCATION_PLACES_DEBUG
+  ) {
+    return;
+  }
+
+  console.log(
+    `[Google Places Debug] ${label}`,
+    data === undefined
+      ? ''
+      : JSON.stringify(
+          data,
+          null,
+          2,
+        ),
+  );
+}
 
 
 /**
@@ -399,6 +461,10 @@ const PLACES_NEARBY_URL =
   'https://places.googleapis.com/v1/places:searchNearby';
 
 
+const PLACES_TEXT_SEARCH_URL =
+  'https://places.googleapis.com/v1/places:searchText';
+
+
 /**
  * =========================================================
  * Build Request Body
@@ -417,16 +483,13 @@ function buildRequestBody(
     options.radiusMeters ??
     DEFAULT_RADIUS_METERS;
 
-
   const maxResults =
     options.maxResults ??
     DEFAULT_MAX_RESULTS;
 
-
   const type =
     options.type ??
     'restaurant';
-
 
   return {
     includedTypes: [
@@ -450,8 +513,281 @@ function buildRequestBody(
           radiusMeters,
       },
     },
+
+    rankPreference:
+      options.rankByDistance === false
+        ? 'POPULARITY'
+        : 'DISTANCE',
+
+    languageCode:
+      'zh-TW',
+
+    regionCode:
+      'TW',
   };
 }
+
+
+function buildTextSearchRequestBody(
+  coordinate:
+    GooglePlacesCoordinate,
+
+  options:
+    GooglePlacesSearchOptions,
+): Record<string, unknown> {
+
+  const radiusMeters =
+    options.radiusMeters ??
+    DEFAULT_RADIUS_METERS;
+
+  const maxResults =
+    options.maxResults ??
+    DEFAULT_MAX_RESULTS;
+
+  const query =
+    typeof options.query === 'string'
+      ? options.query.trim()
+      : '';
+
+  const body:
+    Record<string, unknown> = {
+
+    textQuery:
+      query,
+
+    maxResultCount:
+      maxResults,
+
+    locationBias: {
+      circle: {
+        center: {
+          latitude:
+            coordinate.latitude,
+
+          longitude:
+            coordinate.longitude,
+        },
+
+        radius:
+          radiusMeters,
+      },
+    },
+
+    rankPreference:
+      options.rankByDistance === false
+        ? 'RELEVANCE'
+        : 'DISTANCE',
+
+    languageCode:
+      'zh-TW',
+
+    regionCode:
+      'TW',
+  };
+
+  /*
+   * 有 query 時以文字搜尋意圖為主。
+   *
+   * 例如「火鍋」：
+   *   textQuery = 火鍋
+   *
+   * 不再強制 strictTypeFiltering=restaurant，
+   * 避免 Google 將有效的火鍋店結果過度過濾，
+   * 造成「無法取得附近店家資訊」。
+   *
+   * 沒有 query 時才使用 type 作為明確類型篩選。
+   */
+  if (
+    options.type &&
+    !query
+  ) {
+
+    body.includedType =
+      options.type;
+
+    body.strictTypeFiltering =
+      true;
+  }
+
+  return body;
+}
+
+
+/**
+ * =========================================================
+ * Taiwan Address Normalization
+ * =========================================================
+ *
+ * Google Places 偶爾仍可能回傳英文格式地址。
+ *
+ * 原則：
+ * 1. 優先使用 Google 的 zh-TW formattedAddress。
+ * 2. 若仍是明顯英文地址，不把英文地址直接丟給使用者。
+ * 3. 沒有可靠的中文轉換資料時，寧可不顯示地址。
+ *
+ * 地址不是搜尋結果的核心資訊，因此不為了「一定要有地址」
+ * 而自行猜測或翻譯道路名稱。
+ * =========================================================
+ */
+
+function normalizeTaiwanAddress(
+  formattedAddress:
+    string |
+    undefined,
+
+  shortFormattedAddress:
+    string |
+    undefined,
+
+  addressComponents:
+    any[] |
+    undefined,
+):
+  string |
+  undefined {
+
+  const candidates = [
+    formattedAddress,
+    shortFormattedAddress,
+  ].filter(
+    (
+      value,
+    ): value is string =>
+      typeof value === 'string' &&
+      value.trim().length > 0,
+  );
+
+  /*
+   * Google 已依 zh-TW 回傳中文時直接採用。
+   */
+  const chineseAddress =
+    candidates.find(
+      (value) =>
+        /[\u3400-\u9fff]/.test(value),
+    );
+
+  if (
+    chineseAddress
+  ) {
+    return chineseAddress.trim();
+  }
+
+  /*
+   * 若 formattedAddress 仍是英文，嘗試使用
+   * addressComponents 的中文 longText。
+   *
+   * 這不是自行翻譯，因此不會猜測道路名稱。
+   */
+  if (
+    Array.isArray(addressComponents)
+  ) {
+    const parts =
+      addressComponents
+        .map(
+          (component: any) =>
+            optionalString(
+              component?.longText,
+            ),
+        )
+        .filter(
+          (value): value is string =>
+            typeof value === 'string' &&
+            /[\u3400-\u9fff]/.test(value),
+        );
+
+    if (
+      parts.length
+    ) {
+      return [
+        ...new Set(parts),
+      ].join('');
+    }
+  }
+
+  /*
+   * 沒有可靠的繁體中文地址時不輸出英文地址。
+   */
+  return undefined;
+}
+
+
+function extractFuelTypes(
+  raw:
+    any,
+): string[] {
+
+  const fuelPrices =
+    Array.isArray(
+      raw?.fuelOptions?.fuelPrices,
+    )
+      ? raw.fuelOptions.fuelPrices
+      : [];
+
+  return fuelPrices
+    .map(
+      (item: any) =>
+        optionalString(
+          item?.type,
+        ),
+    )
+    .filter(
+      (value: unknown): value is string =>
+        typeof value === 'string',
+    );
+}
+
+
+function isPureGasOnlyStation(
+  raw:
+    any,
+): boolean {
+
+  const primaryType =
+    optionalString(
+      raw?.primaryType,
+    );
+
+  const types =
+    Array.isArray(raw?.types)
+      ? raw.types.filter(
+          (value: unknown): value is string =>
+            typeof value === 'string',
+        )
+      : [];
+
+  const fuelTypes =
+    extractFuelTypes(
+      raw,
+    );
+
+  const gasOnlyFuelTypes =
+    fuelTypes.length > 0 &&
+    fuelTypes.every(
+      (fuelType) =>
+        fuelType === 'LPG' ||
+        fuelType === 'METHANE',
+    );
+
+  const name =
+    optionalString(
+      raw?.displayName?.text,
+    ) || '';
+
+  const obviousGasOnlyName =
+    /(加氣|加气|天然氣|天然气|CNG|LPG|LNG)/i.test(
+      name,
+    );
+
+  return (
+    gasOnlyFuelTypes ||
+    (
+      obviousGasOnlyName &&
+      primaryType !== 'gas_station' &&
+      !types.includes('gas_station')
+    )
+  );
+}
+
 
 
 /**
@@ -522,8 +858,18 @@ function normalizePlace(
     name,
 
     address:
-      optionalString(
-        raw.formattedAddress,
+      normalizeTaiwanAddress(
+        optionalString(
+          raw.formattedAddress,
+        ),
+        optionalString(
+          raw.shortFormattedAddress,
+        ),
+        Array.isArray(
+          raw.addressComponents,
+        )
+          ? raw.addressComponents
+          : undefined,
       ),
 
     latitude,
@@ -566,6 +912,16 @@ function normalizePlace(
               typeof value === 'string',
           )
         : [],
+
+    primaryType:
+      optionalString(
+        raw.primaryType,
+      ),
+
+    fuelTypes:
+      extractFuelTypes(
+        raw,
+      ),
 
     googleMapsUri:
       optionalString(
@@ -767,29 +1123,100 @@ export async function searchNearbyPlaces(
    * ---------------------------------------------------------
    */
 
+const hasQuery =
+    typeof options.query === 'string' &&
+    options.query.trim().length > 0;
+
+  const requestUrl =
+    hasQuery
+      ? PLACES_TEXT_SEARCH_URL
+      : PLACES_NEARBY_URL;
+
   const requestBody =
-    buildRequestBody(
-      coordinate,
+    hasQuery
+      ? buildTextSearchRequestBody(
+          coordinate,
+          {
+            ...options,
+            radiusMeters,
+            maxResults,
+          },
+        )
+      : buildRequestBody(
+          coordinate,
+          {
+            ...options,
+            radiusMeters,
+            maxResults,
+          },
+        );
+
+
+    placesDebug(
+      'REQUEST',
       {
-        ...options,
+        endpoint:
+          hasQuery
+            ? 'searchText'
+            : 'searchNearby',
 
-        radiusMeters,
+        requestUrl,
 
-        maxResults,
+        coordinate,
+
+        options: {
+          ...options,
+        },
+
+        effectiveRadiusMeters:
+          radiusMeters,
+
+        effectiveMaxResults:
+          maxResults,
+
+        requestBody,
       },
     );
 
 
+
+  let timeout:
+    ReturnType<typeof setTimeout> | undefined;
+
+
   try {
 
-    const response =
-      await fetch(
-        PLACES_NEARBY_URL,
-        {
-          method:
-            'POST',
+    const controller =
+      new AbortController();
 
-          headers: {
+    timeout =
+      setTimeout(
+        () =>
+          controller.abort(),
+        GOOGLE_PLACES_REQUEST_TIMEOUT_MS,
+      );
+
+
+    placesDebug(
+      'FETCH_START',
+      {
+        timeoutMs:
+          GOOGLE_PLACES_REQUEST_TIMEOUT_MS,
+      },
+    );
+
+
+    const response =
+  await fetch(
+    requestUrl,
+    {
+      method:
+        'POST',
+
+      signal:
+        controller.signal,
+
+      headers: {
             'Content-Type':
               'application/json',
 
@@ -801,11 +1228,15 @@ export async function searchNearbyPlaces(
                 'places.id',
                 'places.displayName',
                 'places.formattedAddress',
+                'places.shortFormattedAddress',
+                'places.addressComponents',
                 'places.location',
                 'places.rating',
                 'places.userRatingCount',
                 'places.currentOpeningHours.openNow',
                 'places.types',
+                'places.primaryType',
+                'places.fuelOptions',
                 'places.googleMapsUri',
               ].join(','),
           },
@@ -816,6 +1247,22 @@ export async function searchNearbyPlaces(
             ),
         },
       );
+
+
+    
+    placesDebug(
+      'HTTP_RESPONSE',
+      {
+        status:
+          response.status,
+
+        statusText:
+          response.statusText,
+
+        ok:
+          response.ok,
+      },
+    );
 
 
     /*
@@ -864,6 +1311,10 @@ export async function searchNearbyPlaces(
         429
       ) {
 
+        clearTimeout(
+          timeout,
+        );
+
         return {
           ok: false,
 
@@ -877,6 +1328,10 @@ export async function searchNearbyPlaces(
         };
       }
 
+
+      clearTimeout(
+        timeout,
+      );
 
       return {
         ok: false,
@@ -907,7 +1362,30 @@ export async function searchNearbyPlaces(
       data =
         await response.json();
 
+    placesDebug(
+      'JSON_PARSED',
+      {
+        hasPlaces:
+          Array.isArray(
+            data?.places,
+          ),
+
+        placeCount:
+          Array.isArray(
+            data?.places,
+          )
+            ? data.places.length
+            : undefined,
+      },
+    );
+
+
+
     } catch {
+
+      clearTimeout(
+        timeout,
+      );
 
       return {
         ok: false,
@@ -949,8 +1427,113 @@ export async function searchNearbyPlaces(
     }
 
 
-    const places =
-      data.places
+    placesDebug(
+      'RAW_RESPONSE_SUMMARY',
+      {
+        placeCount:
+          data.places.length,
+
+        places:
+          data.places.map(
+            (raw: any) => ({
+              id:
+                optionalString(
+                  raw?.id,
+                ),
+
+              name:
+                optionalString(
+                  raw?.displayName?.text,
+                ),
+
+              formattedAddress:
+                optionalString(
+                  raw?.formattedAddress,
+                ),
+
+              latitude:
+                toFiniteNumber(
+                  raw?.location?.latitude,
+                ),
+
+              longitude:
+                toFiniteNumber(
+                  raw?.location?.longitude,
+                ),
+
+              rating:
+                toFiniteNumber(
+                  raw?.rating,
+                ),
+
+              primaryType:
+                optionalString(
+                  raw?.primaryType,
+                ),
+
+              types:
+                Array.isArray(
+                  raw?.types,
+                )
+                  ? raw.types
+                  : [],
+
+              fuelTypes:
+                extractFuelTypes(
+                  raw,
+                ),
+
+              googleMapsUri:
+                optionalString(
+                  raw?.googleMapsUri,
+                ),
+            }),
+          ),
+      },
+    );
+
+
+    const rawPlaces =
+      data.places.filter(
+        (raw: any) => {
+
+          if (
+            options.type !== 'gas_station'
+          ) {
+            return true;
+          }
+
+          const primaryType =
+            optionalString(
+              raw?.primaryType,
+            );
+
+          const types =
+            Array.isArray(raw?.types)
+              ? raw.types.filter(
+                  (value: unknown): value is string =>
+                    typeof value === 'string',
+                )
+              : [];
+
+          const isActualGasStation =
+            primaryType === 'gas_station' ||
+            types.includes('gas_station');
+
+          if (
+            !isActualGasStation
+          ) {
+            return false;
+          }
+
+          return !isPureGasOnlyStation(
+            raw,
+          );
+        },
+      );
+
+    const normalizedPlaces =
+      rawPlaces
         .map(
           (
             raw: any,
@@ -969,23 +1552,191 @@ export async function searchNearbyPlaces(
             place !== undefined,
         );
 
+    placesDebug(
+      'NORMALIZED_RESULTS',
+      {
+        count:
+          normalizedPlaces.length,
+
+        places:
+          normalizedPlaces.map(
+            (place: GooglePlaceResult) => ({
+              placeId:
+                place.placeId,
+
+              name:
+                place.name,
+
+              address:
+                place.address,
+
+              latitude:
+                place.latitude,
+
+              longitude:
+                place.longitude,
+
+              distanceMeters:
+                place.distanceMeters,
+
+              rating:
+                place.rating,
+
+              primaryType:
+                place.primaryType,
+
+              types:
+                place.types,
+
+              fuelTypes:
+                place.fuelTypes,
+            }),
+          ),
+      },
+    );
+
+
+    /*
+     * 同一 place 可能因 Google 搜尋結果特性重複出現。
+     * 回覆前以 placeId 去重，再做真正直線距離排序。
+     */
+    const uniquePlaces: GooglePlaceResult[] =
+      Array.from(
+        new Map<string, GooglePlaceResult>(
+          normalizedPlaces.map(
+            (place: GooglePlaceResult) => [
+              place.placeId,
+              place,
+            ],
+          ),
+        ).values(),
+      );
+
+    const sortedPlaces =
+      sortPlaces(
+        uniquePlaces,
+      );
+
+    const finalPlaces =
+      sortedPlaces.slice(
+        0,
+        maxResults,
+      );
+
+
+    /*
+     * 加油站是高風險的 POI 類型。
+     * 如果經過嚴格 gas_station 過濾後完全沒有真實結果，
+     * 不把空陣列當成成功，避免上層再讓 AI 自行補一個店家。
+     */
+    if (
+      options.type === 'gas_station' &&
+      finalPlaces.length === 0
+    ) {
+
+      clearTimeout(
+        timeout,
+      );
+
+      return {
+        ok: false,
+
+        error: {
+          code:
+            'API_ERROR',
+
+          message:
+            'Google Places 沒有回傳符合條件的真正加油站。',
+        },
+      };
+    }
+
+
+    clearTimeout(
+      timeout,
+    );
+
+    placesDebug(
+      'FINAL_RESULTS',
+      {
+        uniqueCount:
+          uniquePlaces.length,
+
+        returnedCount:
+          finalPlaces.length,
+
+        places:
+          finalPlaces.map(
+            (place: GooglePlaceResult) => ({
+              placeId:
+                place.placeId,
+
+              name:
+                place.name,
+
+              address:
+                place.address,
+
+              distanceMeters:
+                place.distanceMeters,
+
+              rating:
+                place.rating,
+
+              primaryType:
+                place.primaryType,
+
+              types:
+                place.types,
+
+              fuelTypes:
+                place.fuelTypes,
+            }),
+          ),
+      },
+    );
+
 
     return {
       ok: true,
 
       places:
-        sortPlaces(
-          places,
-        ),
+        finalPlaces,
     };
 
   } catch (
     error
   ) {
 
+    if (
+      timeout !== undefined
+    ) {
+      clearTimeout(
+        timeout,
+      );
+    }
+
+    const isTimeout =
+      error instanceof Error &&
+      error.name === 'AbortError';
+
+
     console.error(
       '[Google Places Service] Request failed:',
       error,
+    );
+
+
+    placesDebug(
+      isTimeout
+        ? 'FETCH_TIMEOUT'
+        : 'FETCH_ERROR',
+      {
+        message:
+          error instanceof Error
+            ? error.message
+            : String(error),
+      },
     );
 
 
@@ -997,7 +1748,9 @@ export async function searchNearbyPlaces(
           'NETWORK_ERROR',
 
         message:
-          '無法連線至 Google Places API。',
+          isTimeout
+            ? `Google Places API 超過 ${GOOGLE_PLACES_REQUEST_TIMEOUT_MS / 1000} 秒未回應。`
+            : '無法連線至 Google Places API。',
       },
     };
   }

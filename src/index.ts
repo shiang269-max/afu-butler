@@ -71,6 +71,10 @@ import {
   canExecuteLocationIntent,
 } from './location/location-intent-handler';
 
+import {
+  handleLocationPlacesAction,
+} from './location/location-places-action-handler';
+
 
 /**
  * =========================================================
@@ -687,14 +691,6 @@ app.post(
               ];
 
 
-            console.log(
-              'LINE event source:',
-              event.source.type,
-              'userId:',
-              event.source.userId,
-              'message:',
-              userMessage,
-            );
 
 
             /*
@@ -774,26 +770,10 @@ app.post(
               );
 
 
-            console.log(
-              '[AI Memory Debug] conversationKey:',
-              conversationKey,
-            );
 
 
-            console.log(
-              '[AI Memory Debug] history count:',
-              historyBeforeMessage.length,
-            );
 
 
-            console.log(
-              '[AI Memory Debug] history:',
-              JSON.stringify(
-                historyBeforeMessage,
-                null,
-                2,
-              ),
-            );
 
 
             /*
@@ -1076,12 +1056,11 @@ try {
  * 2. handled=true 且無法安全執行
  *    → 直接回覆 clarificationMessage，然後 return。
  *
- * 3. handled=true 且可以安全執行
- *    → 目前已接入的 CURRENT_LOCATION 直接回覆。
+ * 3. CURRENT_LOCATION
+ *    → 直接使用目前 Location State 回覆。
  *
  * 4. NEAR_CURRENT / NEAR_HOME
- *    → Intent 已經辨識，但 Places Action Layer 尚未接入。
- *      因此不假裝已完成搜尋，直接告知目前能力狀態並結束。
+ *    → 交給 Location Places Action Handler。
  *
  * 5. HOME_ROUTE
  *    → 已由上面的 Location Route Handler 優先處理。
@@ -1154,29 +1133,160 @@ try {
 
     /*
      * -----------------------------------------------------
-     * 尚未接入 Places Action
+     * NEAR_CURRENT / NEAR_HOME
      * -----------------------------------------------------
      *
-     * Intent 可以正確辨識，
-     * 但目前不具備真正搜尋能力。
+     * Intent 只負責判斷需求與確認位置是否足夠。
+     * 真正的 Places 搜尋交給 Action Handler。
      *
-     * 絕不宣稱已搜尋或產生虛構結果。
+     * Action Handler：
+     *
+     * Location State / Home Location
+     *          ↓
+     * Google Places Service
+     *          ↓
+     * 真實店家結果
+     *
+     * 這裡只負責把結果整理成 LINE 回覆。
+     * -----------------------------------------------------
      */
 
     else if (
-      locationIntentResult.intent ===
-        'NEAR_CURRENT'
+      canExecute &&
+      (
+        locationIntentResult.intent ===
+          'NEAR_CURRENT' ||
+        locationIntentResult.intent ===
+          'NEAR_HOME'
+      ) &&
+      locationIntentResult.action
     ) {
-      locationReply =
-        '喳，奴才已知道您要查目前位置附近的店家；附近搜尋功能目前尚未接入，暫時不能替您查詢。';
-    }
+      try {
+        const placesResult =
+          await handleLocationPlacesAction(
+            {
+              action:
+                locationIntentResult.action ===
+                  'SEARCH_NEAR_HOME'
+                  ? 'SEARCH_NEAR_HOME'
+                  : 'SEARCH_NEAR_CURRENT',
 
-    else if (
-      locationIntentResult.intent ===
-        'NEAR_HOME'
-    ) {
-      locationReply =
-        '喳，奴才已知道您要查詢固定家附近的店家；附近搜尋功能目前尚未接入，暫時不能替您查詢。';
+              message:
+                userMessage,
+
+              userId:
+                event.source.userId || '',
+            },
+          );
+
+        if (
+          !placesResult.success
+        ) {
+          if (
+            placesResult.reason ===
+              'current-location-unknown'
+          ) {
+            locationReply =
+              '喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。';
+          }
+
+          else if (
+            placesResult.reason ===
+              'home-location-unknown'
+          ) {
+            locationReply =
+              '喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。';
+          }
+
+          else if (
+            placesResult.reason ===
+              'MISSING_API_KEY'
+          ) {
+            locationReply =
+              '喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。';
+          }
+
+          else {
+            locationReply =
+              '喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。';
+          }
+        }
+
+        else {
+          const places =
+            placesResult.places || [];
+
+          if (
+            !places.length
+          ) {
+            locationReply =
+              '喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。';
+          }
+
+          else {
+            const placeLines =
+              places
+                .slice(0, 10)
+                .map(
+                  (place: any, index: number) => {
+                    const name =
+                      typeof place?.displayName === 'string'
+                        ? place.displayName
+                        : typeof place?.displayName?.text === 'string'
+                          ? place.displayName.text
+                          : typeof place?.name === 'string'
+                            ? place.name
+                            : '未命名店家';
+
+                    const address =
+                      typeof place?.formattedAddress === 'string'
+                        ? place.formattedAddress
+                        : typeof place?.address === 'string'
+                          ? place.address
+                          : '';
+
+                    const rating =
+                      typeof place?.rating === 'number'
+                        ? `｜評分 ${place.rating}`
+                        : '';
+
+                    const distance =
+                      typeof place?.distanceMeters === 'number'
+                        ? `｜約 ${Math.round(place.distanceMeters)} 公尺`
+                        : '';
+
+                    return (
+                      `${index + 1}. ${name}` +
+                      `${rating}` +
+                      `${distance}` +
+                      (address
+                        ? `\n   ${address}`
+                        : '')
+                    );
+                  },
+                );
+
+            const searchLabel =
+              locationIntentResult.intent ===
+                'NEAR_HOME'
+                ? '固定家附近'
+                : '目前位置附近';
+
+            locationReply =
+              `喳，奴才已依照「${searchLabel}」的實際位置查到以下店家：\n\n` +
+              placeLines.join('\n\n');
+          }
+        }
+
+      } catch (error) {
+        logError(
+          'Location Places Action 處理失敗',
+          error,
+        );
+
+        locationReply =
+          '喳，奴才已接到您的附近搜尋需求，但目前無法取得店家資料，請稍後再試。';
+      }
     }
 
     /*
@@ -1227,7 +1337,6 @@ try {
   }
 
 } catch (error) {
-
   logError(
     'Location Intent 處理失敗',
     error,
@@ -1235,11 +1344,35 @@ try {
 
   /*
    * Location Intent 發生例外時，
-   * 不在這裡重複使用 replyToken。
-   *
-   * 這裡保留既有 Reminder / Observer / AI Core
-   * 的錯誤處理流程。
+   * 不能讓這個 event 繼續進入 Reminder / Observer / AI Core。
+   * 否則可能重複使用同一個 replyToken。
    */
+
+  try {
+    await lineClient.replyMessage(
+      {
+        replyToken:
+          event.replyToken,
+
+        messages: [
+          {
+            type:
+              'text',
+
+            text:
+              '總管暫時無法處理這道位置資訊，請稍後再試。',
+          },
+        ],
+      },
+    );
+  } catch (fallbackError) {
+    logError(
+      'Location Intent 備援回覆失敗',
+      fallbackError,
+    );
+  }
+
+  return;
 }
 
 
@@ -1529,17 +1662,9 @@ try {
                   familyTarget.type === 'all'
                 ) {
 
-                  console.log(
-                    'Family target: ALL',
-                  );
 
                 } else {
 
-                  console.log(
-                    'Family target:',
-                    familyTarget.member.identity,
-                    familyTarget.userId,
-                  );
                 }
               }
 
@@ -1591,20 +1716,8 @@ try {
                * =====================================================
                */
 
-              console.log(
-                '[AI Context Debug] recentMessages count:',
-                aiContext.recentMessages.length,
-              );
 
 
-              console.log(
-                '[AI Context Debug] recentMessages:',
-                JSON.stringify(
-                  aiContext.recentMessages,
-                  null,
-                  2,
-                ),
-              );
 
 
               /*

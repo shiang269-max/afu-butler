@@ -166,7 +166,12 @@ function isNearCurrentRequest(
     text.includes('周邊') ||
     text.includes('周圍') ||
     text.includes('附近有') ||
-    text.includes('附近有什麼');
+    text.includes('附近有什麼') ||
+    text.includes('離我最近') ||
+    text.includes('离我最近') ||
+    text.includes('離你最近') ||
+    text.includes('离你最近') ||
+    text.includes('最近的');
 
   if (
     !hasNear
@@ -202,8 +207,15 @@ function isNearCurrentRequest(
     '午餐',
     '晚餐',
     '便利商店',
+    '便利店',
     '超商',
     '超市',
+    '加油站',
+    '油站',
+    '咖啡店',
+    '咖啡館',
+    '火鍋',
+    '涮涮鍋',
     '藥局',
     '醫院',
     '銀行',
@@ -249,8 +261,15 @@ function isNearHomeRequest(
     '午餐',
     '晚餐',
     '便利商店',
+    '便利店',
     '超商',
     '超市',
+    '加油站',
+    '油站',
+    '咖啡店',
+    '咖啡館',
+    '火鍋',
+    '涮涮鍋',
     '藥局',
     '醫院',
     '銀行',
