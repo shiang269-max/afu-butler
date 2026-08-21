@@ -54,6 +54,18 @@ import {
   formatQuotaSummary,
 } from './line-quota';
 
+import {
+  handleLocationMessage,
+} from './location/location-handler';
+
+import {
+  getLatestLocation,
+} from './location/location-state';
+
+import {
+  handleHomeRouteRequest,
+} from './location/location-route-handler';
+
 
 /**
  * =========================================================
@@ -428,6 +440,11 @@ function createAiContext(
       historyBeforeMessage,
     );
 
+  const latestLocation =
+    getLatestLocation(
+      event.source.userId,
+    );
+
 
   return buildAiContext({
 
@@ -471,6 +488,35 @@ function createAiContext(
       buildFamilyMemberContexts(),
 
     recentMessages,
+
+    location:
+      latestLocation
+        ? {
+            userId:
+              latestLocation.userId,
+
+            name:
+              latestLocation.title,
+
+            address:
+              latestLocation.address,
+
+            latitude:
+              latestLocation.latitude,
+
+            longitude:
+              latestLocation.longitude,
+
+            sourceType:
+              latestLocation.sourceType,
+
+            sourceGroupId:
+              latestLocation.sourceGroupId,
+
+            updatedAt:
+              latestLocation.updatedAt,
+          }
+        : undefined,
 
     currentMessage,
   });
@@ -518,7 +564,96 @@ app.post(
 
             /*
              * =====================================================
-             * 只處理文字訊息
+             * LINE Location 訊息
+             * =====================================================
+             *
+             * Location 不進 Gemini，也不進 Reminder / Observer。
+             *
+             * 先由獨立 Location Handler 接收並保存，
+             * 後續文字訊息再由 createAiContext() 取得最近位置。
+             *
+             * 這一層目前只建立：
+             *
+             * LINE
+             *   ↓
+             * Node.js
+             *   ↓
+             * Location State
+             *
+             * Google API / Places / Routes 暫時完全不介入。
+             * =====================================================
+             */
+
+            if (
+              event.type === 'message' &&
+              event.message.type === 'location'
+            ) {
+
+              if (
+                !event.replyToken ||
+                (
+                  event.source.type !== 'user' &&
+                  event.source.type !== 'group'
+                )
+              ) {
+                return;
+              }
+
+              const locationResult =
+                handleLocationMessage(
+                  event,
+                );
+
+              if (
+                !locationResult.handled
+              ) {
+                console.warn(
+                  '[Location] 無法處理 LINE 位置訊息:',
+                  locationResult.reason,
+                );
+
+                return;
+              }
+
+              if (
+                event.source.type === 'group' &&
+                event.source.groupId
+              ) {
+                recordFamilyGroupMessage(
+                  event.source.groupId,
+                );
+              }
+
+              console.log(
+                '[Location] 已收到位置:',
+                JSON.stringify(
+                  locationResult.location,
+                ),
+              );
+
+              await lineClient.replyMessage(
+                {
+                  replyToken:
+                    event.replyToken,
+
+                  messages: [
+                    {
+                      type: 'text',
+
+                      text:
+                        '喳，奴才已收到您剛分享的位置。',
+                    },
+                  ],
+                },
+              );
+
+              return;
+            }
+
+
+            /*
+             * =====================================================
+             * 文字訊息
              * =====================================================
              */
 
@@ -799,6 +934,128 @@ if (
 
   return;
 }
+
+/*
+ * =====================================================
+ * Location Route
+ * =====================================================
+ *
+ * 回家路線需求優先於 Reminder / Observer / AI Core。
+ *
+ * 例如：
+ * - 我回家要多久
+ * - 我回到家要多久
+ * - 到家還要多久
+ * - 回家多遠
+ *
+ * Handler 自己負責：
+ * - 判斷是否為回家路線需求
+ * - 確認目前位置
+ * - 確認固定家位置
+ * - 呼叫 Google Routes Service
+ * - 產生安全回覆
+ *
+ * index.ts 只負責：
+ * - 把文字交給 Handler
+ * - 將 Handler 結果送回 LINE
+ * - 成功或失敗後寫入 Memory
+ *
+ * 重要：
+ * Location Route Handler 若判定 handled=true，
+ * 本 event 不得再進入 Reminder / Observer / AI Core，
+ * 避免同一個 replyToken 被重複使用。
+ * =====================================================
+ */
+
+try {
+  const locationRouteResult =
+    await handleHomeRouteRequest(
+      userMessage,
+      event.source.userId || '',
+    );
+
+  if (locationRouteResult.handled) {
+
+    const locationRouteReply =
+      locationRouteResult.replyText ||
+      (
+        locationRouteResult.success
+          ? '喳，奴才已取得回家的路程資訊。'
+          : '喳，奴才目前無法取得這道位置資訊。'
+      );
+
+    await lineClient.replyMessage(
+      {
+        replyToken:
+          event.replyToken,
+
+        messages: [
+          {
+            type: 'text',
+
+            text:
+              locationRouteReply.slice(
+                0,
+                5000,
+              ),
+          },
+        ],
+      },
+    );
+
+    addToMemory(
+      conversationKey,
+      'user',
+      userMessage,
+    );
+
+    addToMemory(
+      conversationKey,
+      'assistant',
+      locationRouteReply,
+    );
+
+    return;
+  }
+
+} catch (error) {
+  logError(
+    'Location Route 處理失敗',
+    error,
+  );
+
+  /*
+   * Location Route 已經進入獨立處理流程。
+   * 如果 Handler 發生例外，仍然不能讓同一個
+   * replyToken 繼續往下進入 Reminder / AI Core。
+   */
+
+  try {
+    await lineClient.replyMessage(
+      {
+        replyToken:
+          event.replyToken,
+
+        messages: [
+          {
+            type: 'text',
+
+            text:
+              '總管暫時無法處理這道位置資訊，請稍後再試。',
+          },
+        ],
+      },
+    );
+  } catch (fallbackError) {
+    logError(
+      'Location Route 備援回覆失敗',
+      fallbackError,
+    );
+  }
+
+  return;
+}
+
 /*
  * =====================================================
  * Reminder

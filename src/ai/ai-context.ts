@@ -92,6 +92,8 @@ export interface AiConversationMessage {
 
 export interface AiLocationContext {
 
+  userId?: string;
+
   name?: string;
 
   city?: string;
@@ -103,6 +105,12 @@ export interface AiLocationContext {
   latitude?: number;
 
   longitude?: number;
+
+  sourceType?: 'user' | 'group';
+
+  sourceGroupId?: string;
+
+  updatedAt?: string;
 }
 
 
@@ -591,23 +599,31 @@ ${normalizedMessages
 
   /*
    * =======================================================
-   * 地點
+   * 最近分享的位置
+   * =======================================================
+   *
+   * 目前這裡不是「家庭固定地址」。
+   *
+   * 它代表目前說話者最近一次透過 LINE
+   * 主動分享給總管的位置。
+   *
+   * 位置來源目前由獨立 Location State 提供。
+   * Google API 尚未介入。
    * =======================================================
    */
 
   const locationSection =
     context.location
       ? `
-【家庭位置】
+【目前可用的最近位置】
+
+這是目前說話者最近一次主動分享的位置。
+
+LINE User ID：
+${safeText(context.location.userId) || '未設定'}
 
 名稱：
 ${safeText(context.location.name) || '未設定'}
-
-城市：
-${safeText(context.location.city) || '未設定'}
-
-行政區：
-${safeText(context.location.district) || '未設定'}
 
 地址：
 ${safeText(context.location.address) || '未設定'}
@@ -617,20 +633,23 @@ ${context.location.latitude ?? '未設定'}
 
 經度：
 ${context.location.longitude ?? '未設定'}
-`
-      : `
-【家庭位置】
 
-目前沒有設定固定家庭位置。
+分享來源：
+${context.location.sourceType === 'group' ? '家庭群組' : '私訊'}
 
-不要自行假設家庭的精確位置。
+分享時間：
+${safeText(context.location.updatedAt) || '未設定'}
 
 注意：
-「家庭固定位置」與「使用者剛才在對話中告訴你的目前位置」
-是兩件不同的事情。
+這是「最近分享的位置」，不是永久固定位置。
+不要把它自行推論成家庭住址，也不要假設它永遠代表使用者現在仍在該處。
+`
+      : `
+【目前可用的最近位置】
 
-如果最近對話中明確出現目前位置，
-應優先把那段對話當作短期上下文理解。
+目前沒有可用的最近位置資料。
+
+不要自行假設任何人的精確位置。
 `;
 
 
