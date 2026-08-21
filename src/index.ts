@@ -68,6 +68,7 @@ import {
 
 import {
   handleLocationIntent,
+  canExecuteLocationIntent,
 } from './location/location-intent-handler';
 
 
@@ -1065,25 +1066,29 @@ try {
  * Location Intent
  * =====================================================
  *
- * 目前先接管「我現在在哪」這類可以由既有
- * Location State 直接回答的需求。
+ * Location Intent 必須在 Reminder / Observer / AI Core 前完成。
  *
- * 這一層刻意不直接接管：
+ * 規則：
  *
- * - NEAR_CURRENT
- * - NEAR_HOME
+ * 1. handled=false
+ *    → 不是位置需求，繼續既有流程。
  *
- * 因為 Places Action Layer 尚未接入。
- * 在 Places 尚未準備完成前，不讓 Intent Handler
- * 產生一個沒有實際搜尋能力的假成功結果。
+ * 2. handled=true 且無法安全執行
+ *    → 直接回覆 clarificationMessage，然後 return。
  *
- * HOME_ROUTE 已由上面的 Location Route Handler
- * 優先處理，因此正常情況不會流到這裡。
+ * 3. handled=true 且可以安全執行
+ *    → 目前已接入的 CURRENT_LOCATION 直接回覆。
+ *
+ * 4. NEAR_CURRENT / NEAR_HOME
+ *    → Intent 已經辨識，但 Places Action Layer 尚未接入。
+ *      因此不假裝已完成搜尋，直接告知目前能力狀態並結束。
+ *
+ * 5. HOME_ROUTE
+ *    → 已由上面的 Location Route Handler 優先處理。
  *
  * 重要：
- * Location Intent 若 handled=true，
- * 必須直接結束 event，避免同一 replyToken
- * 再進入 Observer / AI Core。
+ * Location Intent handled=true 後，
+ * 本 event 不得再進入 Reminder / Observer / AI Core。
  * =====================================================
  */
 
@@ -1095,30 +1100,96 @@ try {
     );
 
   if (
-    locationIntentResult.handled &&
-    locationIntentResult.intent ===
-      'CURRENT_LOCATION'
+    locationIntentResult.handled
   ) {
+    const canExecute =
+      canExecuteLocationIntent(
+        locationIntentResult,
+      );
 
-    const locationReply =
-      locationIntentResult.resolved &&
+    let locationReply: string;
+
+    /*
+     * -----------------------------------------------------
+     * 需要補充位置資訊
+     * -----------------------------------------------------
+     */
+
+    if (
+      !canExecute &&
+      locationIntentResult.clarificationRequired
+    ) {
+      locationReply =
+        locationIntentResult.clarificationMessage ||
+        '總管目前還缺少必要的位置資訊，請先提供目前位置或設定固定位置。';
+    }
+
+    /*
+     * -----------------------------------------------------
+     * CURRENT_LOCATION
+     * -----------------------------------------------------
+     */
+
+    else if (
+      canExecute &&
+      locationIntentResult.intent ===
+        'CURRENT_LOCATION' &&
       locationIntentResult.locationResolution?.location
-        ? (
-            locationIntentResult.locationResolution.location.address
-              ? (
-                  `主上目前的位置是：` +
-                  `${locationIntentResult.locationResolution.location.address}`
-                )
-              : (
-                  `主上目前的位置座標是：` +
-                  `${locationIntentResult.locationResolution.location.latitude}, ` +
-                  `${locationIntentResult.locationResolution.location.longitude}`
-                )
-          )
-        : (
-            locationIntentResult.clarificationMessage ||
-            '總管目前不知道您現在的位置，請直接傳送 LINE 定位，或告訴我您現在在哪裡。'
-          );
+    ) {
+      const location =
+        locationIntentResult.locationResolution.location;
+
+      locationReply =
+        location.address
+          ? (
+              `主上目前的位置是：` +
+              `${location.address}`
+            )
+          : (
+              `主上目前的位置座標是：` +
+              `${location.latitude}, ` +
+              `${location.longitude}`
+            );
+    }
+
+    /*
+     * -----------------------------------------------------
+     * 尚未接入 Places Action
+     * -----------------------------------------------------
+     *
+     * Intent 可以正確辨識，
+     * 但目前不具備真正搜尋能力。
+     *
+     * 絕不宣稱已搜尋或產生虛構結果。
+     */
+
+    else if (
+      locationIntentResult.intent ===
+        'NEAR_CURRENT'
+    ) {
+      locationReply =
+        '喳，奴才已知道您要查目前位置附近的店家；附近搜尋功能目前尚未接入，暫時不能替您查詢。';
+    }
+
+    else if (
+      locationIntentResult.intent ===
+        'NEAR_HOME'
+    ) {
+      locationReply =
+        '喳，奴才已知道您要查詢固定家附近的店家；附近搜尋功能目前尚未接入，暫時不能替您查詢。';
+    }
+
+    /*
+     * -----------------------------------------------------
+     * 其他 handled=true
+     * -----------------------------------------------------
+     */
+
+    else {
+      locationReply =
+        locationIntentResult.clarificationMessage ||
+        '喳，奴才已接住這道位置需求，但目前還缺少可以執行的功能。';
+    }
 
     await lineClient.replyMessage(
       {
@@ -1164,11 +1235,10 @@ try {
 
   /*
    * Location Intent 發生例外時，
-   * 不在這裡直接使用 replyToken。
+   * 不在這裡重複使用 replyToken。
    *
-   * 保留既有 Reminder / Observer / AI Core
-   * 的錯誤處理流程，避免因 Intent 層的非預期
-   * 錯誤造成整個 event 無法回覆。
+   * 這裡保留既有 Reminder / Observer / AI Core
+   * 的錯誤處理流程。
    */
 }
 
