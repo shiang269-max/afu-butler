@@ -66,6 +66,10 @@ import {
   handleHomeRouteRequest,
 } from './location/location-route-handler';
 
+import {
+  handleLocationIntent,
+} from './location/location-intent-handler';
+
 
 /**
  * =========================================================
@@ -1055,6 +1059,119 @@ try {
 
   return;
 }
+
+/*
+ * =====================================================
+ * Location Intent
+ * =====================================================
+ *
+ * 目前先接管「我現在在哪」這類可以由既有
+ * Location State 直接回答的需求。
+ *
+ * 這一層刻意不直接接管：
+ *
+ * - NEAR_CURRENT
+ * - NEAR_HOME
+ *
+ * 因為 Places Action Layer 尚未接入。
+ * 在 Places 尚未準備完成前，不讓 Intent Handler
+ * 產生一個沒有實際搜尋能力的假成功結果。
+ *
+ * HOME_ROUTE 已由上面的 Location Route Handler
+ * 優先處理，因此正常情況不會流到這裡。
+ *
+ * 重要：
+ * Location Intent 若 handled=true，
+ * 必須直接結束 event，避免同一 replyToken
+ * 再進入 Observer / AI Core。
+ * =====================================================
+ */
+
+try {
+  const locationIntentResult =
+    handleLocationIntent(
+      userMessage,
+      event.source.userId || '',
+    );
+
+  if (
+    locationIntentResult.handled &&
+    locationIntentResult.intent ===
+      'CURRENT_LOCATION'
+  ) {
+
+    const locationReply =
+      locationIntentResult.resolved &&
+      locationIntentResult.locationResolution?.location
+        ? (
+            locationIntentResult.locationResolution.location.address
+              ? (
+                  `主上目前的位置是：` +
+                  `${locationIntentResult.locationResolution.location.address}`
+                )
+              : (
+                  `主上目前的位置座標是：` +
+                  `${locationIntentResult.locationResolution.location.latitude}, ` +
+                  `${locationIntentResult.locationResolution.location.longitude}`
+                )
+          )
+        : (
+            locationIntentResult.clarificationMessage ||
+            '總管目前不知道您現在的位置，請直接傳送 LINE 定位，或告訴我您現在在哪裡。'
+          );
+
+    await lineClient.replyMessage(
+      {
+        replyToken:
+          event.replyToken,
+
+        messages: [
+          {
+            type:
+              'text',
+
+            text:
+              locationReply.slice(
+                0,
+                5000,
+              ),
+          },
+        ],
+      },
+    );
+
+    addToMemory(
+      conversationKey,
+      'user',
+      userMessage,
+    );
+
+    addToMemory(
+      conversationKey,
+      'assistant',
+      locationReply,
+    );
+
+    return;
+  }
+
+} catch (error) {
+
+  logError(
+    'Location Intent 處理失敗',
+    error,
+  );
+
+  /*
+   * Location Intent 發生例外時，
+   * 不在這裡直接使用 replyToken。
+   *
+   * 保留既有 Reminder / Observer / AI Core
+   * 的錯誤處理流程，避免因 Intent 層的非預期
+   * 錯誤造成整個 event 無法回覆。
+   */
+}
+
 
 /*
  * =====================================================
