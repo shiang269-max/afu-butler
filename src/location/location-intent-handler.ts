@@ -116,6 +116,50 @@ function normalizeText(
 
 /**
  * =========================================================
+ * Invocation Gate
+ * =========================================================
+ *
+ * 位置型功能屬於「指令功能」，
+ * 必須先呼叫總管才允許進入 Location Intent。
+ *
+ * 支援呼叫詞：
+ *
+ * - 總管
+ * - 大內總管
+ * - 內內
+ * - 喳子
+ * - 渣子
+ *
+ * 沒有呼叫詞時，
+ * 即使文字本身包含位置關鍵字，
+ * 也一律視為正常家庭對話。
+ * =========================================================
+ */
+
+function hasLocationInvocation(
+  text: string,
+): boolean {
+
+  const invocationWords = [
+    '大內總管',
+    '總管',
+    '內內',
+    '喳子',
+    '渣子',
+  ];
+
+
+  return invocationWords.some(
+    (word) =>
+      text.includes(
+        word,
+      ),
+  );
+}
+
+
+/**
+ * =========================================================
  * Intent Detection
  * =========================================================
  */
@@ -574,6 +618,38 @@ export function handleLocationIntent(
 
   if (
     !text
+  ) {
+
+    return {
+      handled:
+        false,
+
+      intent:
+        'UNKNOWN',
+
+      resolved:
+        false,
+
+      clarificationRequired:
+        false,
+    };
+  }
+
+
+  /*
+   * ---------------------------------------------------------
+   * Location 指令必須先呼叫總管
+   *
+   * 沒有呼叫詞時，
+   * 即使文字本身符合位置需求，
+   * 也不進入 Location Intent。
+   * ---------------------------------------------------------
+   */
+
+  if (
+    !hasLocationInvocation(
+      text,
+    )
   ) {
 
     return {
