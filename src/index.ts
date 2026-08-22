@@ -5,6 +5,10 @@ import * as dotenv from 'dotenv';
 
 import { SYSTEM_INSTRUCTION } from './persona';
 import { FAMILY_MEMBERS } from './family';
+
+import {
+  handleVoteMessage,
+} from './vote-handler';
 import { resolveFamilyTarget } from './family-resolver';
 
 import {
@@ -29,6 +33,10 @@ import {
 
 import {
   observeMessage,
+  isObserverMuteCommand,
+  isObserverUnmuteCommand,
+  muteObserver,
+  unmuteObserver,
 } from './observer';
 
 import {
@@ -419,6 +427,78 @@ function buildFamilyMemberContexts() {
  * =========================================================
  */
 
+/**
+ * =========================================================
+ * Vote option generator
+ * =========================================================
+ *
+ * This is only an AI utility for generating candidate options.
+ * It deliberately does NOT use SYSTEM_INSTRUCTION / Persona,
+ * so the vote core remains independent of personality and style.
+ *
+ * The returned data is parsed into plain option strings and
+ * passed into vote-handler.ts / vote.ts.
+ * =========================================================
+ */
+async function generateVoteOptions(
+  prompt: string,
+): Promise<string[]> {
+  try {
+    const response =
+      await geminiApiManager.execute(
+        async (gemini) => {
+          return gemini.models.generateContent(
+            {
+              model:
+                'gemini-3.5-flash-lite',
+
+              contents:
+                [
+                  '你是一個候選項目產生器。',
+                  '',
+                  '請根據下面的投票題目提供 4 個合理、彼此不同、適合實際家庭決策的候選項目。',
+                  '只輸出候選項目。',
+                  '每行一個。',
+                  '不要編號。',
+                  '不要解釋。',
+                  '不要輸出其他文字。',
+                  '',
+                  prompt,
+                ].join('\n'),
+            },
+          );
+        },
+      );
+
+    return (
+      response.text
+        ?.split(/\r?\n/)
+        .map(
+          (line) =>
+            line
+              .replace(
+                /^\s*(?:[-*•]|\d+[.)、．])\s*/,
+                '',
+              )
+              .trim(),
+        )
+        .filter(
+          Boolean,
+        )
+        .slice(0, 4)
+      || []
+    );
+  } catch (error) {
+    logError(
+      'Vote 選項產生失敗',
+      error,
+    );
+
+    return [];
+  }
+}
+
+
 function createAiContext(
   event: any,
   familyMember: any,
@@ -570,6 +650,19 @@ app.post(
 
         events.map(
           async (event: any) => {
+
+            /*
+             * Observer 的 Reply Token 時間基準。
+             * 從收到 webhook event 就開始計時，避免前面的流程把安全時間吃掉。
+             */
+            const eventReceivedAt = Date.now();
+            const observerTraceId =
+              `evt-${eventReceivedAt}-${Math.random().toString(36).slice(2, 7)}`;
+
+            console.log(
+              `[ObserverRoute][${observerTraceId}] EVENT_RECEIVED type=${event.type} source=${event.source?.type || 'unknown'} replyToken=${event.replyToken ? 'yes' : 'no'}`,
+            );
+
 
             /*
              * =====================================================
@@ -811,6 +904,100 @@ app.post(
 
 const shouldResolveTarget =
   hasTargetIntent;
+
+/*
+ * =====================================================
+ * Observer 閉嘴／解除閉嘴
+ * =====================================================
+ *
+ * 這是 Observer 控制指令，不交給 Gemini。
+ *
+ * 「閉嘴」只暫停被動插話；
+ * 之後如果使用者再次明確叫總管，仍會走主動 AI Core。
+ * =====================================================
+ */
+
+const observerTargetId =
+  event.source.type === 'group'
+    ? event.source.groupId
+    : event.source.userId;
+
+if (
+  observerTargetId &&
+  isObserverMuteCommand(userMessage)
+) {
+
+  const mutedUntil =
+    muteObserver(observerTargetId);
+
+  console.log(
+    `[ObserverRoute][${observerTraceId}] MUTE until=${new Date(mutedUntil).toISOString()}` ,
+  );
+
+  await lineClient.replyMessage(
+    {
+      replyToken: event.replyToken,
+      messages: [
+        {
+          type: 'text',
+          text: '喳，遵旨。奴才先安靜。',
+        },
+      ],
+    },
+  );
+
+  addToMemory(
+    conversationKey,
+    'user',
+    userMessage,
+  );
+
+  addToMemory(
+    conversationKey,
+    'assistant',
+    '喳，遵旨。奴才先安靜。',
+  );
+
+  return;
+}
+
+if (
+  observerTargetId &&
+  isObserverUnmuteCommand(userMessage)
+) {
+
+  unmuteObserver(observerTargetId);
+
+  console.log(
+    `[ObserverRoute][${observerTraceId}] UNMUTE`,
+  );
+
+  await lineClient.replyMessage(
+    {
+      replyToken: event.replyToken,
+      messages: [
+        {
+          type: 'text',
+          text: '喳，奴才恢復值班。',
+        },
+      ],
+    },
+  );
+
+  addToMemory(
+    conversationKey,
+    'user',
+    userMessage,
+  );
+
+  addToMemory(
+    conversationKey,
+    'assistant',
+    '喳，奴才恢復值班。',
+  );
+
+  return;
+}
 
 /*
  * =====================================================
@@ -1378,6 +1565,149 @@ try {
 
 /*
  * =====================================================
+ * Vote
+ * =====================================================
+ *
+ * Vote 必須在 Reminder / Observer / AI Core 前處理。
+ *
+ * 原因：
+ *
+ * - ACTIVE 投票中的「1」
+ * - 「火鍋」
+ * - 「我要投燒肉」
+ * - 「改投 2」
+ *
+ * 都可能不包含「投票」關鍵字，
+ * 但已經是明確的投票操作。
+ *
+ * Vote Handler 自己負責：
+ *
+ * - 投票狀態
+ * - 候選項目
+ * - 投票人數
+ * - 投票
+ * - 改票
+ * - 自動完成
+ * - 平手
+ *
+ * index.ts 只負責：
+ *
+ * - 取得 groupId / userId
+ * - 呼叫 Handler
+ * - 回覆 LINE
+ * - 寫入 Memory
+ *
+ * Vote 核心與 Persona / style 完全分離。
+ * =====================================================
+ */
+
+try {
+  const voteGroupId =
+    event.source.type === 'group'
+      ? event.source.groupId
+      : '';
+
+  /**
+   * 第一版投票只處理群組。
+   *
+   * 私訊不建立家庭群組投票，
+   * 避免 groupId 缺失造成資料混用。
+   */
+  if (voteGroupId) {
+    const voteResult =
+      await handleVoteMessage({
+        groupId:
+          voteGroupId,
+
+        userId:
+          event.source.userId || '',
+
+        message:
+          userMessage,
+
+        generateOptions:
+          generateVoteOptions,
+      });
+
+    if (voteResult.handled) {
+      const voteReply =
+        voteResult.message ||
+        '投票狀態已更新。';
+
+      await lineClient.replyMessage({
+        replyToken:
+          event.replyToken,
+
+        messages: [
+          {
+            type:
+              'text',
+
+            text:
+              voteReply.slice(
+                0,
+                5000,
+              ),
+          },
+        ],
+      });
+
+      addToMemory(
+        conversationKey,
+        'user',
+        userMessage,
+      );
+
+      addToMemory(
+        conversationKey,
+        'assistant',
+        voteReply,
+      );
+
+      return;
+    }
+  }
+} catch (error) {
+  logError(
+    'Vote 處理失敗',
+    error,
+  );
+
+  /**
+   * Vote 一旦進入 Handler，
+   * 就直接結束 event，
+   * 不讓同一個 replyToken 再進入
+   * Reminder / Observer / AI Core。
+   */
+  try {
+    await lineClient.replyMessage({
+      replyToken:
+        event.replyToken,
+
+      messages: [
+        {
+          type:
+            'text',
+
+          text:
+            '投票功能目前無法處理這則訊息，請稍後再試。',
+        },
+      ],
+    });
+  } catch (fallbackError) {
+    logError(
+      'Vote 備援回覆失敗',
+      fallbackError,
+    );
+  }
+
+  return;
+}
+
+
+
+/*
+ * =====================================================
  * Reminder
  * =====================================================
  *
@@ -1495,11 +1825,14 @@ try {
              * → 保留 Observer 原本流程
              * =====================================================
              *
-             * 這一輪不改 Observer。
-             *
-             * Observer 仍然是獨立的被動插話系統。
+             * Observer 使用當次 webhook 的 replyToken。
+             * 被動插話超過 4.5 秒直接放棄，絕不改用 pushMessage。
              * =====================================================
              */
+
+            console.log(
+              `[ObserverRoute][${observerTraceId}] ROUTE_DECISION shouldInvokeController=${shouldInvokeController} elapsed=${Date.now() - eventReceivedAt}ms message=${JSON.stringify(userMessage)}`,
+            );
 
             if (!shouldInvokeController) {
 
@@ -1517,15 +1850,28 @@ try {
 
 
               if (!targetId) {
+                console.log(`[ObserverRoute][${observerTraceId}] OBSERVER_SKIP reason=no-target elapsed=${Date.now() - eventReceivedAt}ms`);
                 return;
               }
 
 
+              console.log(
+                `[ObserverRoute][${observerTraceId}] OBSERVER_ENTER elapsed=${Date.now() - eventReceivedAt}ms target=${targetId} replyRemaining=${Math.max(0, eventReceivedAt + 4500 - Date.now())}ms`,
+              );
+
               observeMessage(
                 {
+                  diagnosticTraceId: observerTraceId,
+                  eventReceivedAt,
                   targetId,
 
                   userMessage,
+
+                  replyToken:
+                    event.replyToken,
+
+                  replyDeadlineAt:
+                    eventReceivedAt + 4500,
 
                   familyMember,
 
