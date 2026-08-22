@@ -119,14 +119,21 @@ function isSupportedAction(
  *
  * 不呼叫 Gemini。
  *
- * 只有「可以直接從使用者文字確認」的搜尋條件
- * 才轉成 query / type。
+ * 原則：
+ *
+ * - 可以直接確認的搜尋條件才搜尋。
+ * - 可以辨識的具體料理，保留成 Google Text Search query。
+ * - 無法可靠理解使用者指定目標時，不得偷偷退回一般
+ *   restaurant 搜尋。
  *
  * =========================================================
  */
 
 interface SearchIntent {
-  type:
+  recognized:
+    boolean;
+
+  type?:
     GooglePlacesSearchType;
 
   query?:
@@ -154,6 +161,130 @@ function normalizeSearchMessage(
 }
 
 
+/**
+ * =========================================================
+ * Generic Search Target
+ * =========================================================
+ *
+ * 移除位置搜尋語句、詢問語氣與泛用詞，
+ * 嘗試留下使用者真正指定的具體搜尋目標。
+ *
+ * 例如：
+ *
+ * 「附近有甚麼烤雞可以吃」
+ *      ↓
+ * 「烤雞」
+ *
+ * 「附近有沒有鹽水雞」
+ *      ↓
+ * 「鹽水雞」
+ *
+ * =========================================================
+ */
+
+function extractSpecificSearchTarget(
+  message: string,
+): string |
+  undefined {
+
+  let text =
+    normalizeSearchMessage(
+      message,
+    );
+
+
+  text =
+    text
+      .replace(
+        /我家附近|家附近|附近|周邊|周边|這附近|这附近/g,
+        ' ',
+      )
+      .replace(
+        /有什麼|有什么|有甚麼|有沒有|有没有/g,
+        ' ',
+      )
+      .replace(
+        /哪裡|哪里|哪間|哪家|什麼地方|什么地方/g,
+        ' ',
+      )
+      .replace(
+        /可以吃|能吃|可吃|吃的|吃嗎|吃吗/g,
+        ' ',
+      )
+      .replace(
+        /可以喝|能喝|可喝|喝的|喝嗎|喝吗/g,
+        ' ',
+      )
+      .replace(
+        /幫我找|帮我找|找一下|找找看|推薦|推荐/g,
+        ' ',
+      )
+      .replace(
+        /最近的|離我最近|离我最近|離你最近|离你最近/g,
+        ' ',
+      )
+      .replace(
+        /請問|请问|一下|呢|嗎|吗/g,
+        ' ',
+      )
+      .replace(
+        /餐廳|餐厅|店家|店|地方/g,
+        ' ',
+      )
+      .replace(
+        /好吃的|美食/g,
+        ' ',
+      )
+      .replace(
+        /想吃|要吃|想找|要找/g,
+        ' ',
+      )
+      .replace(
+        /\s+/g,
+        ' ',
+      )
+      .trim();
+
+
+  if (
+    !text
+  ) {
+
+    return undefined;
+  }
+
+
+  /*
+   * 移除明顯不是搜尋目標的泛用詞。
+   */
+
+  if (
+    /^(吃飯|吃饭|吃什麼|吃什么|吃|喝|餐飲|餐饮|美食)$/.test(
+      text,
+    )
+  ) {
+
+    return undefined;
+  }
+
+
+  /*
+   * 避免把過長整句誤當成搜尋 query。
+   */
+
+  if (
+    text.length >
+    20
+  ) {
+
+    return undefined;
+  }
+
+
+  return text;
+}
+
+
 function resolveSearchIntent(
   message: string,
 
@@ -168,6 +299,9 @@ function resolveSearchIntent(
   ) {
 
     return {
+      recognized:
+        true,
+
       type:
         explicitType,
     };
@@ -193,6 +327,9 @@ function resolveSearchIntent(
   ) {
 
     return {
+      recognized:
+        true,
+
       type:
         'cafe',
     };
@@ -212,6 +349,9 @@ function resolveSearchIntent(
   ) {
 
     return {
+      recognized:
+        true,
+
       type:
         'convenience_store',
     };
@@ -235,6 +375,9 @@ function resolveSearchIntent(
   ) {
 
     return {
+      recognized:
+        true,
+
       type:
         'gas_station',
     };
@@ -245,18 +388,6 @@ function resolveSearchIntent(
    * ---------------------------------------------------------
    * 火鍋
    * ---------------------------------------------------------
-   *
-   * 「火鍋」與「火鍋店」都會命中。
-   *
-   * 不只搜尋 restaurant，
-   * 而是：
-   *
-   * type  = restaurant
-   * query = 火鍋
-   *
-   * 讓 Google Places Text Search 真正搜尋
-   * 「火鍋」這個使用者要求的內容。
-   * ---------------------------------------------------------
    */
 
   if (
@@ -266,6 +397,9 @@ function resolveSearchIntent(
   ) {
 
     return {
+      recognized:
+        true,
+
       type:
         'restaurant',
 
@@ -277,7 +411,7 @@ function resolveSearchIntent(
 
   /*
    * ---------------------------------------------------------
-   * 其他明確餐飲關鍵字
+   * 其他已知餐飲關鍵字
    * ---------------------------------------------------------
    */
 
@@ -320,6 +454,9 @@ function resolveSearchIntent(
   ) {
 
     return {
+      recognized:
+        true,
+
       type:
         'restaurant',
 
@@ -333,7 +470,43 @@ function resolveSearchIntent(
    * ---------------------------------------------------------
    * 一般餐飲需求
    * ---------------------------------------------------------
+   *
+   * 只有真正的泛用需求，
+   * 才搜尋一般 restaurant。
+   *
+   * 例如：
+   *
+   * 「附近有什麼好吃的」
+   * 「附近餐廳」
+   * 「想找吃飯的地方」
+   *
+   * 若句子中包含無法辨識的具體目標，
+   * 不能偷偷降級成一般餐廳搜尋。
+   * ---------------------------------------------------------
    */
+
+  const specificTarget =
+    extractSpecificSearchTarget(
+      text,
+    );
+
+
+  if (
+    specificTarget
+  ) {
+
+    return {
+      recognized:
+        true,
+
+      type:
+        'restaurant',
+
+      query:
+        specificTarget,
+    };
+  }
+
 
   if (
     /餐廳|餐厅|吃飯|吃饭|吃什麼|吃什么|好吃|美食/.test(
@@ -342,19 +515,18 @@ function resolveSearchIntent(
   ) {
 
     return {
+      recognized:
+        true,
+
       type:
         'restaurant',
     };
   }
 
 
-  /*
-   * 沒有更具體條件時，維持原本 restaurant 預設。
-   */
-
   return {
-    type:
-      'restaurant',
+    recognized:
+      false,
   };
 }
 
@@ -379,14 +551,20 @@ function isNearestSearch(
 function buildSearchOptions(
   request:
     LocationPlacesActionRequest,
+
+  searchIntent:
+    SearchIntent,
 ):
   GooglePlacesSearchOptions {
 
-  const searchIntent =
-    resolveSearchIntent(
-      request.message,
-      request.type,
+  if (
+    !searchIntent.type
+  ) {
+
+    throw new Error(
+      'Cannot build search options for unrecognized search intent.',
     );
+  }
 
 
   const options:
@@ -398,11 +576,6 @@ function buildSearchOptions(
     rankByDistance:
       true,
 
-    /*
-     * 「離我最近」不是一般附近搜尋。
-     * 這裡直接限制為第一名，避免便利商店、加油站
-     * 等高密度 POI 因距離很接近而一次列出多家。
-     */
     maxResults:
       isNearestSearch(
         request.message,
@@ -554,9 +727,43 @@ export async function handleLocationPlacesAction(
   }
 
 
+  const searchIntent =
+    resolveSearchIntent(
+      request.message,
+      request.type,
+    );
+
+
+  /*
+   * 無法可靠理解搜尋目標時，
+   * 不進 Google Places。
+   *
+   * 讓上層依照 reason 明確告知使用者，
+   * 而不是假裝理解後亂推薦。
+   */
+
+  if (
+    !searchIntent.recognized
+  ) {
+
+    return {
+      handled: true,
+
+      success: false,
+
+      action:
+        request.action,
+
+      reason:
+        'unrecognized-search-target',
+    };
+  }
+
+
   const searchOptions =
     buildSearchOptions(
       request,
+      searchIntent,
     );
 
 
