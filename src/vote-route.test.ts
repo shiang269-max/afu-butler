@@ -1124,43 +1124,23 @@ async function runTests(): Promise<void> {
       });
 
 
-      const startResult =
-        await simulateVoteRoute({
+      const activeVote =
+        getActiveVote(
+          groupId,
+        );
 
-          source: {
-
-            type:
-              'group',
-
-            groupId,
-
-            userId:
-              'creator',
-
-          },
-
-          message: {
-
-            type:
-              'text',
-
-            text:
-              '開始',
-
-          },
-
-          replyToken:
-            'mock-reply-8e',
-
-        });
-
+      assert(
+        activeVote !==
+          null,
+        '設定人數後應仍有 Vote Session',
+      );
 
       assertEqual(
-        startResult.handled,
-        true,
-
-        '開始指令應被接管',
+        activeVote?.status,
+        'ACTIVE',
+        '設定人數後應直接進入 ACTIVE，不需要開始指令',
       );
+
 
 
       const result =
@@ -1372,34 +1352,23 @@ async function runTests(): Promise<void> {
       });
 
 
-      await simulateVoteRoute({
-
-        source: {
-
-          type:
-            'group',
-
+      const activeVote =
+        getActiveVote(
           groupId,
+        );
 
-          userId:
-            'creator',
+      assert(
+        activeVote !==
+          null,
+        '設定人數後應仍有 Vote Session',
+      );
 
-        },
+      assertEqual(
+        activeVote?.status,
+        'ACTIVE',
+        '設定人數後應直接進入 ACTIVE，不需要開始指令',
+      );
 
-        message: {
-
-          type:
-            'text',
-
-          text:
-            '開始',
-
-        },
-
-        replyToken:
-          'mock-reply-9e',
-
-      });
 
 
       const result =
@@ -1699,7 +1668,7 @@ async function runTests(): Promise<void> {
    */
 
   await test(
-    '私訊完全不進 Vote Route',
+    '私訊使用 userId 作為 Vote Context 並可建立投票',
 
     async () => {
 

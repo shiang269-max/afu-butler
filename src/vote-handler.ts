@@ -258,20 +258,39 @@ function parseInlineOptions(
       )
       .filter(Boolean);
 
-  /*
-   * A delimiter-only message such as
-   * 「火鍋、燒肉、牛肉麵」
-   * is a valid candidate-options response.
-   * A normal sentence without at least two parts is not.
-   */
-  if (
-    colonIndex < 0 &&
-    parsed.length < 2
-  ) {
-    return [];
+  if (parsed.length >= 2) {
+    return parsed;
   }
 
-  return parsed;
+  /*
+   * LINE users often separate short candidate options with spaces:
+   * 「牛肉麵 水餃 泡麵 肉」
+   *
+   * Support that form when there is no explicit colon and no
+   * delimiter-based split. This stays conservative by requiring
+   * at least two whitespace-separated parts.
+   */
+  if (colonIndex < 0) {
+    const whitespaceOptions =
+      optionText
+        .split(/\s+/)
+        .map(
+          (item) =>
+            item
+              .replace(
+                /^\s*\d+[.)、．]\s*/,
+                '',
+              )
+              .trim(),
+        )
+        .filter(Boolean);
+
+    if (whitespaceOptions.length >= 2) {
+      return whitespaceOptions;
+    }
+  }
+
+  return [];
 }
 
 
@@ -678,6 +697,24 @@ function readyPrompt(
     `本次共有 ${vote.expectedVoterCount} 人參與。`,
     '確認後即可開始投票。',
   ].join('\n');
+}
+
+
+function startVoteWhenReady(
+  groupId: string,
+): VoteHandlerResult {
+  const started =
+    startVoting(
+      groupId,
+    );
+
+  return {
+    handled: true,
+    message:
+      activePrompt(
+        started,
+      ),
+  };
 }
 
 
@@ -1264,13 +1301,9 @@ export async function handleVoteMessage(
                 groupId,
               )!;
 
-            return {
-              handled: true,
-              message:
-                readyPrompt(
-                  readyVote,
-                ),
-            };
+            return startVoteWhenReady(
+              groupId,
+            );
           }
         }
 
@@ -1390,13 +1423,9 @@ export async function handleVoteMessage(
           vote.options.length >= 2
         ) {
 
-          return {
-            handled: true,
-            message:
-              readyPrompt(
-                vote,
-              ),
-          };
+          return startVoteWhenReady(
+            groupId,
+          );
         }
 
         return {
@@ -1522,15 +1551,12 @@ export async function handleVoteMessage(
 
         if (
           vote.expectedVoterCount !==
-            null
+            null &&
+          vote.options.length >= 2
         ) {
-          return {
-            handled: true,
-            message:
-              readyPrompt(
-                vote,
-              ),
-          };
+          return startVoteWhenReady(
+            groupId,
+          );
         }
       }
 

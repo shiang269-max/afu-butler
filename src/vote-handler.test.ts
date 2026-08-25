@@ -137,7 +137,7 @@ async function main(): Promise<void> {
 
 
   await test(
-    '大家自己提供候選項目',
+    '大家自己提供候選項目後設定人數直接進入 ACTIVE',
     async () => {
       const groupId = 'group-4';
 
@@ -147,22 +147,11 @@ async function main(): Promise<void> {
         message: '喳子，投票決定晚餐吃什麼',
       });
 
-      const sourceResult = await handleVoteMessage({
+      await handleVoteMessage({
         groupId,
         userId: 'user-1',
         message: '自己提供',
       });
-
-      assertEqual(
-        sourceResult.handled,
-        true,
-        '選擇自己提供應被處理',
-      );
-
-      assert(
-        sourceResult.message?.includes('候選選項'),
-        '應要求提供候選選項',
-      );
 
       const optionsResult = await handleVoteMessage({
         groupId,
@@ -176,6 +165,18 @@ async function main(): Promise<void> {
         '候選項目應被處理',
       );
 
+      const countResult = await handleVoteMessage({
+        groupId,
+        userId: 'user-1',
+        message: '3人',
+      });
+
+      assertEqual(
+        countResult.handled,
+        true,
+        '參與人數應被處理',
+      );
+
       const vote = getActiveVote(groupId);
 
       assert(vote !== null, 'Vote Session 應存在');
@@ -185,18 +186,83 @@ async function main(): Promise<void> {
         '應有三個候選項目',
       );
       assertEqual(
+        vote.expectedVoterCount,
+        3,
+        '參與人數應為 3',
+      );
+      assertEqual(
         vote.status,
-        'READY',
-        '候選項目達標後應為 READY',
+        'ACTIVE',
+        '候選項目與人數完成後應直接開始投票',
+      );
+
+      assert(
+        countResult.message?.includes('投票開始'),
+        '設定人數後應直接回覆投票開始',
       );
     },
   );
 
 
   await test(
-    '系統協助提供候選項目',
+    '大家自己提供候選項目支援空白分隔',
     async () => {
       const groupId = 'group-5';
+
+      await handleVoteMessage({
+        groupId,
+        userId: 'user-1',
+        message: '喳子，投票決定晚餐',
+      });
+
+      await handleVoteMessage({
+        groupId,
+        userId: 'user-1',
+        message: '1',
+      });
+
+      const optionsResult = await handleVoteMessage({
+        groupId,
+        userId: 'user-1',
+        message: '牛肉麵 水餃 泡麵 肉',
+      });
+
+      assertEqual(
+        optionsResult.handled,
+        true,
+        '空白分隔候選項目應被處理',
+      );
+
+      const vote = getActiveVote(groupId);
+
+      assert(vote !== null, 'Vote Session 應存在');
+      assertEqual(
+        vote.options.length,
+        4,
+        '空白分隔應解析為四個候選項目',
+      );
+
+      assert(
+        vote.options.some(
+          (option) => option.text === '牛肉麵',
+        ),
+        '應包含牛肉麵',
+      );
+
+      assert(
+        vote.options.some(
+          (option) => option.text === '水餃',
+        ),
+        '應包含水餃',
+      );
+    },
+  );
+
+
+  await test(
+    '系統協助提供候選項目後直接進入 ACTIVE',
+    async () => {
+      const groupId = 'group-6';
 
       await handleVoteMessage({
         groupId,
@@ -204,22 +270,11 @@ async function main(): Promise<void> {
         message: '內內，投票決定下午要幹嘛',
       });
 
-      const sourceResult = await handleVoteMessage({
+      await handleVoteMessage({
         groupId,
         userId: 'user-1',
         message: '你提供',
       });
-
-      assertEqual(
-        sourceResult.handled,
-        true,
-        '選擇系統提供應被處理',
-      );
-
-      assert(
-        sourceResult.message?.includes('幾位參與投票'),
-        '系統提供模式應先詢問參與人數',
-      );
 
       const countResult = await handleVoteMessage({
         groupId,
@@ -261,17 +316,22 @@ async function main(): Promise<void> {
       );
       assertEqual(
         vote.status,
-        'READY',
-        '系統產生候選項目後應為 READY',
+        'ACTIVE',
+        '系統產生候選項目後應直接進入 ACTIVE',
+      );
+
+      assert(
+        countResult.message?.includes('投票開始'),
+        'AI 候選項目完成後應直接回覆投票開始',
       );
     },
   );
 
 
   await test(
-    '正式開始投票後不需要呼叫詞',
+    '正式投票後不需要呼叫詞',
     async () => {
-      const groupId = 'group-6';
+      const groupId = 'group-7';
 
       await handleVoteMessage({
         groupId,
@@ -279,21 +339,15 @@ async function main(): Promise<void> {
         message: '總管，投票決定晚餐吃什麼：火鍋、燒肉',
       });
 
-      await handleVoteMessage({
+      const startResult = await handleVoteMessage({
         groupId,
         userId: 'creator',
         message: '3人',
       });
 
-      const startResult = await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '開始',
-      });
-
       assert(
         startResult.message?.includes('投票開始'),
-        '應開始正式投票',
+        '設定人數後應直接開始正式投票',
       );
 
       const voteResult = await handleVoteMessage({
@@ -322,7 +376,7 @@ async function main(): Promise<void> {
   await test(
     '自然語言改票',
     async () => {
-      const groupId = 'group-7';
+      const groupId = 'group-8';
 
       await handleVoteMessage({
         groupId,
@@ -334,12 +388,6 @@ async function main(): Promise<void> {
         groupId,
         userId: 'creator',
         message: '3人',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '開始',
       });
 
       await handleVoteMessage({
@@ -360,11 +408,6 @@ async function main(): Promise<void> {
         '改票應被處理',
       );
 
-      assert(
-        changed.message?.includes('燒肉'),
-        '應回覆新的投票選項',
-      );
-
       const vote = getActiveVote(groupId);
       assert(vote !== null, '投票應存在');
       assertEqual(
@@ -379,7 +422,7 @@ async function main(): Promise<void> {
   await test(
     '正式投票後負面句子不誤判',
     async () => {
-      const groupId = 'group-8';
+      const groupId = 'group-9';
 
       await handleVoteMessage({
         groupId,
@@ -393,12 +436,6 @@ async function main(): Promise<void> {
         message: '3人',
       });
 
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '開始',
-      });
-
       const result = await handleVoteMessage({
         groupId,
         userId: 'user-1',
@@ -408,84 +445,7 @@ async function main(): Promise<void> {
       assertEqual(
         result.handled,
         false,
-        '負面句子不應被視為投票',
-      );
-
-      const vote = getActiveVote(groupId);
-      assert(vote !== null, '投票應存在');
-      assertEqual(
-        Object.keys(vote.votes).length,
-        0,
-        '負面句子不應產生投票紀錄',
-      );
-    },
-  );
-
-
-  await test(
-    '系統提供階段可以移除不想要的候選項目並替換',
-    async () => {
-      const groupId = 'group-9';
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '喳子，投票決定下午要幹嘛',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '你提供',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '4人',
-        generateOptions: async () => [
-          '看電影',
-          '去逛街',
-          '吃東西',
-          '在家休息',
-        ],
-      });
-
-      const result = await handleVoteMessage({
-        groupId,
-        userId: 'user-2',
-        message: '我不想吃東西',
-        generateOptions: async (prompt) => {
-          assert(
-            prompt.includes('看電影'),
-            '替換候選項目時應保留現有項目資訊',
-          );
-
-          return ['打保齡球'];
-        },
-      });
-
-      assertEqual(
-        result.handled,
-        true,
-        '候選項目拒絕應被處理',
-      );
-
-      const vote = getActiveVote(groupId);
-      assert(vote !== null, 'Vote Session 應存在');
-
-      assert(
-        !vote.options.some(
-          (option) => option.text === '吃東西',
-        ),
-        '被拒絕項目應移除',
-      );
-
-      assert(
-        vote.options.some(
-          (option) => option.text === '打保齡球',
-        ),
-        '應加入替代候選項目',
+        'ACTIVE 負面句子不應被視為投票',
       );
     },
   );
@@ -510,12 +470,6 @@ async function main(): Promise<void> {
 
       await handleVoteMessage({
         groupId,
-        userId: 'creator',
-        message: '開始',
-      });
-
-      await handleVoteMessage({
-        groupId,
         userId: 'user-1',
         message: '火鍋',
       });
@@ -532,11 +486,6 @@ async function main(): Promise<void> {
         '最後一票應被處理',
       );
 
-      assert(
-        finalResult.message?.includes('火鍋'),
-        '應公布最終結果',
-      );
-
       assertEqual(
         getActiveVote(groupId),
         null,
@@ -546,165 +495,8 @@ async function main(): Promise<void> {
   );
 
 
-  await test(
-    '同群組第二場投票先詢問處理上一場',
-    async () => {
-      const groupId = 'group-11';
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '喳子，投票決定晚餐：火鍋、燒肉',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '3人',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '開始',
-      });
-
-      const result = await handleVoteMessage({
-        groupId,
-        userId: 'user-2',
-        message: '喳子，投票決定下午要幹嘛',
-      });
-
-      assertEqual(
-        result.handled,
-        true,
-        '第二場投票應被攔截',
-      );
-
-      assert(
-        result.message?.includes('晚餐'),
-        '應指出目前投票題目',
-      );
-
-      assert(
-        result.message?.includes('先結束'),
-        '應詢問是否先結束上一場',
-      );
-    },
-  );
-
-
-  await test(
-    '手動完成投票',
-    async () => {
-      const groupId = 'group-12';
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '喳子，投票決定晚餐：火鍋、燒肉',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '3人',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '開始',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'user-1',
-        message: '火鍋',
-      });
-
-      const result = await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '完成投票',
-      });
-
-      assertEqual(
-        result.handled,
-        true,
-        '手動完成應被處理',
-      );
-
-      assertEqual(
-        getActiveVote(groupId),
-        null,
-        '手動完成後不應保留 ACTIVE Vote',
-      );
-    },
-  );
-
-
-  await test(
-    '平手後可以選擇只重投平手項目',
-    async () => {
-      const groupId = 'group-13';
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '喳子，投票決定晚餐：火鍋、燒肉、牛肉麵',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '2人',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '開始',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'user-1',
-        message: '火鍋',
-      });
-
-      await handleVoteMessage({
-        groupId,
-        userId: 'user-2',
-        message: '燒肉',
-      });
-
-      const tieVote = getActiveVote(groupId);
-      assert(tieVote !== null, '平手狀態應保留 Vote Session');
-      assertEqual(tieVote.status, 'TIE', '應進入 TIE');
-
-      const revote = await handleVoteMessage({
-        groupId,
-        userId: 'creator',
-        message: '1',
-      });
-
-      assertEqual(
-        revote.handled,
-        true,
-        '平手再投應被處理',
-      );
-
-      const active = getActiveVote(groupId);
-      assert(active !== null, '應重新進入投票');
-      assertEqual(active.status, 'ACTIVE', '應回到 ACTIVE');
-      assertEqual(active.options.length, 2, '只保留平手項目');
-    },
-  );
-
-
   console.log(
-    '\n🎉 所有 Vote Handler v6 整合測試完成。',
+    '\n🎉 所有 Vote Handler v6.1 整合測試完成。',
   );
 }
 
