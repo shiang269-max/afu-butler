@@ -1,4 +1,4 @@
-import {
+﻿import {
   Vote,
   VoteOptionSource,
   startVote,
@@ -68,6 +68,27 @@ function cleanTriggerWords(
 
 
 /**
+ * Detect whether a NEW vote explicitly calls the butler.
+ * Existing SETUP / ACTIVE / TIE messages do not require a call word.
+ */
+function hasRequiredVoteInvocation(
+  message: string,
+): boolean {
+  return [
+    '大內總管',
+    '總管',
+    '內內',
+    '喳子',
+    '渣子',
+    '阿福',
+  ].some(
+    (word) =>
+      message.includes(word),
+  );
+}
+
+
+/**
  * Decide whether this message is explicitly asking to start a vote.
  *
  * Deliberately conservative so ordinary conversation is not
@@ -80,6 +101,18 @@ function hasVoteStartIntent(
     cleanTriggerWords(message);
 
   if (!text) {
+    return false;
+  }
+
+  const normalized =
+    text
+      .replace(/\s+/g, '');
+
+  if (
+    /^(?:結束投票|完成投票|結束這次投票|投票完成)$/.test(
+      normalized,
+    )
+  ) {
     return false;
   }
 
@@ -109,6 +142,7 @@ function parseVoteTitle(
 ): string {
   let text =
     cleanTriggerWords(message)
+      .replace(/^[，,、：:；;。！？!?\s]+/, '')
       .trim();
 
   const startPhrases = [
@@ -130,7 +164,7 @@ function parseVoteTitle(
   for (const phrase of startPhrases) {
     const pattern =
       new RegExp(
-        `^${phrase}\\s*`,
+        `^${phrase}[\\s，,、：:；;。！？!?]*`,
       );
 
     if (pattern.test(text)) {
@@ -138,6 +172,10 @@ function parseVoteTitle(
         text
           .replace(
             pattern,
+            '',
+          )
+          .replace(
+            /^[，,、：:；;。！？!?\\s]+/,
             '',
           )
           .trim();
@@ -149,46 +187,36 @@ function parseVoteTitle(
   text =
     text
       .replace(
-        /^要投票\s*/,
+        /^要投票[\\s，,、：:；;。！？!?]*/,
         '',
       )
       .replace(
-        /^幫我們投票\s*/,
+        /^幫我們投票[\\s，,、：:；;。！？!?]*/,
         '',
       )
       .replace(
-        /^幫我投票\s*/,
+        /^幫我投票[\\s，,、：:；;。！？!?]*/,
         '',
       )
-      .trim();
-
-  text =
-    text
       .replace(
-        /^(幫我們|幫我|我們|大家|一起)\s*/g,
+        /^(幫我們|幫我|我們|大家|一起)[\\s，,、：:；;。！？!?]*/,
         '',
       )
-      .trim();
-
-  /**
-   * Examples:
-   * 晚餐吃什麼
-   * 晚餐吃什麼？
-   * 決定下午要幹嘛
-   * 決定下午要幹嘛？
-   */
-  text =
-    text
       .replace(
-        /^決定\s*/,
+        /^決定[\\s，,、：:；;。！？!?]*/,
+        '',
+      )
+      .replace(
+        /^[，,、：:；;。！？!?\\s]+/,
         '',
       )
       .trim();
 
   return text
-    .replace(/[。！!]+$/g, '')
+    .replace(/[。！!？?]+$/g, '')
     .trim();
 }
+
 
 
 /**
@@ -203,33 +231,47 @@ function parseInlineOptions(
   const colonIndex =
     cleaned.search(/[:：]/);
 
-  if (colonIndex < 0) {
-    return [];
-  }
-
   const optionText =
-    cleaned
-      .slice(
-        colonIndex + 1,
-      )
-      .trim();
+    colonIndex >= 0
+      ? cleaned
+          .slice(
+            colonIndex + 1,
+          )
+          .trim()
+      : cleaned;
 
   if (!optionText) {
     return [];
   }
 
-  return optionText
-    .split(/[、,，\/]/)
-    .map(
-      (item) =>
-        item
-          .replace(
-            /^\s*\d+[.)、．]\s*/,
-            '',
-          )
-          .trim(),
-    )
-    .filter(Boolean);
+  const parsed =
+    optionText
+      .split(/[、,，\/]/)
+      .map(
+        (item) =>
+          item
+            .replace(
+              /^\s*\d+[.)、．]\s*/,
+              '',
+            )
+            .trim(),
+      )
+      .filter(Boolean);
+
+  /*
+   * A delimiter-only message such as
+   * 「火鍋、燒肉、牛肉麵」
+   * is a valid candidate-options response.
+   * A normal sentence without at least two parts is not.
+   */
+  if (
+    colonIndex < 0 &&
+    parsed.length < 2
+  ) {
+    return [];
+  }
+
+  return parsed;
 }
 
 
@@ -413,7 +455,7 @@ function parseExplicitVoteInput(
   }
 
   const patterns = [
-    /^(?:我要|我投|我選|我要投|我選擇)\s*(.+)$/i,
+    /^(?:我要投|我要|我投|我選擇|我選)\s*(.+)$/i,
     /^選\s*(.+)$/,
     /^投\s*(.+)$/,
     /^改投\s*(.+)$/,
@@ -487,11 +529,17 @@ function parseRejectedOption(
     const candidate =
       match[1].trim();
 
+    const exactCandidates = [
+      candidate,
+      /^我不想吃/.test(text) || /^不想吃/.test(text)
+        ? `吃${candidate}`
+        : candidate,
+    ];
+
     const exact =
       vote.options.find(
         (option) =>
-          option.text ===
-          candidate,
+          exactCandidates.includes(option.text),
       );
 
     if (exact) {
@@ -1074,19 +1122,30 @@ export async function handleVoteMessage(
       'SETUP'
     ) {
 
-      if (
-        isMemberOptionSource(
-          text,
-        )
+      const normalizedSetupChoice =
+        text
+          .replace(/\s+/g, '')
+          .toLowerCase();
+
+      const choseMembers =
+        normalizedSetupChoice === '1'
         ||
-        isAiOptionSource(
-          text,
-        )
+        isMemberOptionSource(text);
+
+      const choseAI =
+        normalizedSetupChoice === '2'
+        ||
+        isAiOptionSource(text);
+
+      if (
+        choseMembers
+        ||
+        choseAI
       ) {
 
         const source:
           VoteOptionSource =
-          isAiOptionSource(text)
+          choseAI
             ? 'AI'
             : 'MEMBERS';
 
@@ -1349,6 +1408,62 @@ export async function handleVoteMessage(
 
 
       if (
+        vote.optionSource ===
+        'AI'
+      ) {
+        const rejected =
+          parseRejectedOption(
+            vote,
+            text,
+          );
+
+        if (rejected) {
+          removeVoteOption(
+            groupId,
+            rejected.text,
+          );
+
+          vote =
+            getActiveVote(
+              groupId,
+            )!;
+
+          const replacements =
+            await generateOptionsForVote(
+              vote,
+              options,
+            );
+
+          if (
+            replacements.length
+          ) {
+            addVoteOptions(
+              groupId,
+              replacements.slice(0, 1),
+            );
+          }
+
+          const updated =
+            getActiveVote(
+              groupId,
+            )!;
+
+          return {
+            handled: true,
+            message:
+              updated.options.length >= 2
+                ? readyPrompt(updated)
+                : [
+                    `已移除：「${rejected.text}」。`,
+                    '',
+                    optionsPrompt(),
+                  ].join('\n'),
+          };
+        }
+      }
+
+
+      if (
         isStartCommand(
           text,
         )
@@ -1415,6 +1530,69 @@ export async function handleVoteMessage(
               readyPrompt(
                 vote,
               ),
+          };
+        }
+      }
+
+
+      if (
+        vote.optionSource ===
+        'AI'
+      ) {
+        const rejected =
+          parseRejectedOption(
+            vote,
+            text,
+          );
+
+        if (rejected) {
+          removeVoteOption(
+            groupId,
+            rejected.text,
+          );
+
+          vote =
+            getActiveVote(
+              groupId,
+            )!;
+
+          const replacements =
+            await generateOptionsForVote(
+              vote,
+              options,
+            );
+
+          if (
+            replacements.length
+          ) {
+            addVoteOptions(
+              groupId,
+              replacements.slice(
+                0,
+                1,
+              ),
+            );
+          }
+
+          const updated =
+            getActiveVote(
+              groupId,
+            )!;
+
+          return {
+            handled: true,
+            message:
+              updated.expectedVoterCount !==
+                null &&
+              updated.options.length >= 2
+                ? readyPrompt(
+                    updated,
+                  )
+                : [
+                    `已移除：「${rejected.text}」。`,
+                    '',
+                    optionsPrompt(),
+                  ].join('\\n'),
           };
         }
       }
@@ -1669,6 +1847,10 @@ export async function handleVoteMessage(
    * =======================================================
    */
   if (
+    !hasRequiredVoteInvocation(
+      text,
+    )
+    ||
     !hasVoteStartIntent(
       text,
     )
