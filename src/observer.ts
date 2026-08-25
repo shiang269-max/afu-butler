@@ -24,19 +24,25 @@ interface ObserverState {
 
   generalTimer?: TimerHandle;
 
-  greetingTimer?: TimerHandle;
   greetingType?: '早安' | '晚安';
   greetingLastSeenAt?: number;
 
-  foodTimer?: TimerHandle;
   foodLastSeenAt?: number;
 
   dailyLastReplyAt?: number;
+  dailyLastKey?: string;
+  dailyLastAt?: number;
+  mutedUntil?: number;
+  greetingInFlight?: boolean;
 }
 
 interface ObserveOptions {
+  diagnosticTraceId?: string;
+  eventReceivedAt?: number;
   targetId: string;
   userMessage: string;
+  replyToken: string;
+  replyDeadlineAt: number;
   familyMember?: FamilyMember;
   getConversationContext: () => string;
   gemini: GoogleGenAI;
@@ -63,13 +69,6 @@ const GENERAL_DEBOUNCE_MS =
   2_500;
 
 
-/*
- * 早安／晚安延遲。
- *
- * 給其他家人一點時間先互相回應。
- */
-const GREETING_DELAY_MS =
-  5_000;
 
 
 /*
@@ -79,18 +78,22 @@ const GREETING_WAVE_COOLDOWN_MS =
   60_000;
 
 
-/*
- * 吃飯相關延遲。
- */
-const FOOD_DELAY_MS =
-  5_000;
 
 
 /*
- * 日常狀態的被動回覆冷卻。
+ * 同一個日常狀態的防重複時間。
+ * 只有相同狀態短時間重複時才攔截。
  */
-const DAILY_REPLY_COOLDOWN_MS =
-  10_000;
+const DAILY_DUPLICATE_COOLDOWN_MS =
+  30_000;
+
+
+/*
+ * 「閉嘴」後 Observer 暫停時間。
+ * 只禁止被動 Observer；主動呼叫仍然正常。
+ */
+const OBSERVER_MUTE_DURATION_MS =
+  10 * 60 * 1000;
 
 
 /*
@@ -102,6 +105,100 @@ const MAX_PASSIVE_CHARS =
   15;
 
 
+/**
+ * 判斷是否為「要求總管暫停被動插話」的指令。
+ *
+ * Observer 控制指令必須明確呼叫總管。
+ * 只接受「總管／內內／喳子 + 控制指令」。
+ * 避免家庭正常聊天碰到「閉嘴／安靜」等字眼就誤觸發。
+ */
+export function isObserverMuteCommand(
+  message: string,
+): boolean {
+  const text =
+    message
+      .trim()
+      .replace(/[，。！？、,.!?～~\s]/g, '');
+
+  return /^(?:總管|內內|喳子)(?:閉嘴|先閉嘴|安靜|先安靜|不要插話|別插話|先不要插話|不要再插話|別再插話|少插嘴)$/.test(text);
+}
+
+
+/**
+ * 判斷是否為解除 Observer 閉嘴狀態的指令。
+ * 必須帶有明確呼叫詞。
+ */
+export function isObserverUnmuteCommand(
+  message: string,
+): boolean {
+  const text =
+    message
+      .trim()
+      .replace(/[，。！？、,.!?～~\s]/g, '');
+
+  return /^(?:總管|內內|喳子)(?:可以說話了|解除閉嘴|不用閉嘴了|不用安靜了|恢復插話|恢復說話)$/.test(text);
+}
+
+
+/**
+ * 讓指定 target 的 Observer 暫停被動插話。
+ */
+export function muteObserver(
+  targetId: string,
+): number {
+  const state = getState(targetId);
+  const until = Date.now() + OBSERVER_MUTE_DURATION_MS;
+  state.mutedUntil = until;
+
+  if (state.generalTimer) {
+    clearTimeout(state.generalTimer);
+    state.generalTimer = undefined;
+  }
+
+  state.meaningfulSinceDecision = 0;
+
+  return until;
+}
+
+
+/**
+ * 解除指定 target 的 Observer 閉嘴狀態。
+ */
+export function unmuteObserver(
+  targetId: string,
+): void {
+  const state = getState(targetId);
+  state.mutedUntil = undefined;
+}
+
+
+function isObserverMuted(
+  state: ObserverState,
+): boolean {
+  if (!state.mutedUntil) {
+    return false;
+  }
+
+  if (Date.now() >= state.mutedUntil) {
+    state.mutedUntil = undefined;
+    return false;
+  }
+
+  return true;
+}
+
+
+/*
+ * Observer 的額度安全截止時間由 index.ts 建立。
+ * 超過期限絕不 Reply，也絕不 Push。
+ */
+function isReplyWindowOpen(
+  replyDeadlineAt: number,
+): boolean {
+  return Date.now() < replyDeadlineAt;
+}
+
+
 /* =========================================================
  * 公開入口
  * ========================================================= */
@@ -109,6 +206,19 @@ const MAX_PASSIVE_CHARS =
 export function observeMessage(
   options: ObserveOptions,
 ): void {
+  const traceId =
+    options.diagnosticTraceId ||
+    `observer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const elapsed = () =>
+    options.eventReceivedAt
+      ? Date.now() - options.eventReceivedAt
+      : Date.now();
+
+  console.log(
+    `[Observer][${traceId}] RECEIVED elapsed=${elapsed()}ms target=${options.targetId} message=${JSON.stringify(options.userMessage)}`,
+  );
+
   const {
     targetId,
     userMessage,
@@ -117,13 +227,22 @@ export function observeMessage(
   const state =
     getState(targetId);
 
+  if (isObserverMuted(state)) {
+    console.log(`[Observer][${traceId}] SKIP reason=muted elapsed=${elapsed()}ms`);
+    return;
+  }
+
   const category =
     classifyMessage(userMessage);
 
+  console.log(
+    `[Observer][${traceId}] CLASSIFIED category=${category} elapsed=${elapsed()}ms`,
+  );
 
   switch (category) {
 
     case 'greeting':
+      console.log(`[Observer][${traceId}] DISPATCH greeting elapsed=${elapsed()}ms`);
       handleGreeting(
         options,
         state,
@@ -132,6 +251,7 @@ export function observeMessage(
 
 
     case 'food':
+      console.log(`[Observer][${traceId}] DISPATCH food elapsed=${elapsed()}ms`);
       handleFood(
         options,
         state,
@@ -140,6 +260,7 @@ export function observeMessage(
 
 
     case 'daily':
+      console.log(`[Observer][${traceId}] DISPATCH daily elapsed=${elapsed()}ms`);
       handleDaily(
         options,
         state,
@@ -148,6 +269,7 @@ export function observeMessage(
 
 
     case 'general':
+      console.log(`[Observer][${traceId}] DISPATCH general elapsed=${elapsed()}ms`);
       handleGeneral(
         options,
         state,
@@ -157,6 +279,7 @@ export function observeMessage(
 
     case 'none':
     default:
+      console.log(`[Observer][${traceId}] DISPATCH none elapsed=${elapsed()}ms`);
       return;
   }
 }
@@ -285,87 +408,50 @@ function handleGreeting(
   const text =
     options.userMessage.trim();
 
-
   const type =
     text.includes('晚安') ||
-    /^晚[\s!！。,.，～~]*$/.test(
-      text,
-    )
+    /^晚[\s!！。,.，～~]*$/.test(text)
       ? '晚安'
       : '早安';
-
 
   const now =
     Date.now();
 
-
   /*
-   * 同一波已經回過，
-   * 不要每個人都回一次。
+   * 同一波早安／晚安只回一次。
+   * 不再故意延遲 5 秒，避免 replyToken 被背景 timer 吃掉。
    */
   if (
     state.greetingLastSeenAt &&
-    now -
-      state.greetingLastSeenAt <
-      GREETING_WAVE_COOLDOWN_MS &&
-    !state.greetingTimer
+    now - state.greetingLastSeenAt < GREETING_WAVE_COOLDOWN_MS
   ) {
     return;
   }
 
-
   /*
-   * 同一波有新的早安／晚安，
-   * 重新計時。
+   * 同一波尚未完成時，不重複開 Gemini。
    */
-  if (
-    state.greetingTimer &&
-    state.greetingType === type
-  ) {
-
-    clearTimeout(
-      state.greetingTimer,
-    );
+  if (state.greetingInFlight) {
+    return;
   }
 
+  state.greetingInFlight = true;
 
-  state.greetingType =
-    type;
-
-
-  state.greetingTimer =
-    setTimeout(
-      async () => {
-
-        state.greetingTimer =
-          undefined;
-
-        state.greetingType =
-          undefined;
-
-        state.greetingLastSeenAt =
-          Date.now();
-
-
-        await generateAndPushPassiveReply(
-          {
-            ...options,
-
-            mode:
-              type === '早安'
-                ? 'greeting_morning'
-                : 'greeting_night',
-
-            fallback:
-              type === '早安'
-                ? '早，諸位主子。'
-                : '晚安，諸位主子。',
-          },
-        );
-      },
-
-      GREETING_DELAY_MS,
-    );
+  void generateAndReplyPassive(
+    {
+      ...options,
+      mode:
+        type === '早安'
+          ? 'greeting_morning'
+          : 'greeting_night',
+      fallback:
+        type === '早安'
+          ? '早，諸位主子。'
+          : '晚安，諸位主子。',
+    },
+  ).finally(() => {
+    state.greetingInFlight = false;
+  });
 }
 
 
@@ -382,59 +468,31 @@ function handleFood(
     Date.now();
 
 
-  /*
-   * 同一段吃飯話題持續時，
-   * 不要一直開新的計時器。
-   */
-  if (
-    state.foodTimer
-  ) {
-
-    clearTimeout(
-      state.foodTimer,
-    );
-  }
-
-
   state.foodLastSeenAt =
     now;
 
 
-  state.foodTimer =
-    setTimeout(
-      async () => {
-
-        state.foodTimer =
-          undefined;
-
-
-        /*
-         * 如果總管剛剛才被動說過，
-         * 暫時保持安靜。
-         */
-        if (
-          Date.now() -
-            state.lastPassiveReplyAt <
-            GENERAL_PASSIVE_COOLDOWN_MS
-        ) {
-          return;
-        }
+  /*
+   * 如果總管剛剛才被動說過，
+   * 暫時保持安靜。
+   */
+  if (
+    Date.now() -
+      state.lastPassiveReplyAt <
+      GENERAL_PASSIVE_COOLDOWN_MS
+  ) {
+    return;
+  }
 
 
-        await generateAndPushPassiveReply(
-          {
-            ...options,
+  void generateAndReplyPassive(
+    {
+      ...options,
+      mode: 'food',
+      fallback: '奴才也想吃。',
+    },
+  );
 
-            mode: 'food',
-
-            fallback:
-              '奴才也想吃。',
-          },
-        );
-      },
-
-      FOOD_DELAY_MS,
-    );
 }
 
 
@@ -450,33 +508,32 @@ function handleDaily(
   const now =
     Date.now();
 
+  const dailyKey =
+    normalizeDailyKey(options.userMessage);
 
   /*
-   * 日常狀態可以快速接住，
-   * 但不能連續每一句都回。
+   * 防的是「同一個狀態重複」，不是所有 daily 訊息一律封鎖 10 秒。
+   *
+   * 例如：
+   * 「好累」→ 回
+   * 「下雨」→ 可以再判斷，不會被上一句的 10 秒硬擋掉。
    */
   if (
-    state.dailyLastReplyAt &&
-    now -
-      state.dailyLastReplyAt <
-      DAILY_REPLY_COOLDOWN_MS
+    state.dailyLastKey === dailyKey &&
+    state.dailyLastAt &&
+    now - state.dailyLastAt < DAILY_DUPLICATE_COOLDOWN_MS
   ) {
     return;
   }
 
+  state.dailyLastKey = dailyKey;
+  state.dailyLastAt = now;
 
-  state.dailyLastReplyAt =
-    now;
-
-
-  void generateAndPushPassiveReply(
+  void generateAndReplyPassive(
     {
       ...options,
-
       mode: 'daily',
-
-      fallback:
-        '喳，奴才收到。',
+      fallback: '喳，奴才收到。',
     },
   );
 }
@@ -543,6 +600,8 @@ function handleGeneral(
     setTimeout(
       async () => {
 
+        console.log(`[Observer][${options.diagnosticTraceId || 'unknown'}] TIMER_FIRE general elapsed=${options.eventReceivedAt ? Date.now() - options.eventReceivedAt : Date.now()}ms`);
+
         state.generalTimer =
           undefined;
 
@@ -560,7 +619,7 @@ function handleGeneral(
           0;
 
 
-        await generateAndPushPassiveReply(
+        await generateAndReplyPassive(
           {
             ...options,
 
@@ -580,13 +639,24 @@ function handleGeneral(
  * Gemini：判斷是否值得插話
  * ========================================================= */
 
-async function generateAndPushPassiveReply(
+async function generateAndReplyPassive(
   options:
     ObserveOptions & {
       mode: ObserverMode;
       fallback: string;
     },
 ): Promise<void> {
+
+  const traceId =
+    options.diagnosticTraceId ||
+    `observer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const elapsed = () =>
+    options.eventReceivedAt
+      ? Date.now() - options.eventReceivedAt
+      : Date.now();
+
+  console.log(`[Observer][${traceId}] GENERATE_START mode=${options.mode} elapsed=${elapsed()}ms replyRemaining=${Math.max(0, options.replyDeadlineAt - Date.now())}ms`);
 
   const {
   targetId,
@@ -595,6 +665,8 @@ async function generateAndPushPassiveReply(
   getConversationContext,
   gemini,
   lineClient,
+  replyToken,
+  replyDeadlineAt,
   onPassiveReply,
   mode,
   fallback,
@@ -602,6 +674,18 @@ async function generateAndPushPassiveReply(
 
 
   try {
+
+    const currentState = getState(targetId);
+
+    if (isObserverMuted(currentState)) {
+      console.log(`[Observer][${traceId}] ABORT reason=muted-before-generate elapsed=${elapsed()}ms`);
+      return;
+    }
+
+    if (!isReplyWindowOpen(replyDeadlineAt)) {
+      console.log(`[Observer][${traceId}] ABORT reply-window-closed-before-gemini elapsed=${elapsed()}ms`);
+      return;
+    }
 
     const context =
       getConversationContext();
@@ -612,6 +696,8 @@ async function generateAndPushPassiveReply(
         mode,
       );
 
+
+    console.log(`[Observer][${traceId}] GEMINI_START elapsed=${elapsed()}ms`);
 
     const response =
       await gemini.models.generateContent(
@@ -711,6 +797,10 @@ REPLY: 你的短句
       );
 
 
+    if (!isReplyWindowOpen(replyDeadlineAt)) {
+      return;
+    }
+
     let replyText =
       response.text?.trim() ||
       '';
@@ -742,7 +832,8 @@ REPLY: 你的短句
           fallback;
 
       } else if (
-        mode === 'food'
+        mode === 'food' ||
+        mode === 'daily'
       ) {
 
         /*
@@ -804,21 +895,27 @@ REPLY: 你的短句
 
 
     if (!replyText) {
+      console.log(`[Observer][${traceId}] DECISION empty-reply elapsed=${elapsed()}ms`);
       return;
     }
 
+    console.log(`[Observer][${traceId}] DECISION reply=${JSON.stringify(replyText)} elapsed=${elapsed()}ms replyRemaining=${Math.max(0, replyDeadlineAt - Date.now())}ms`);
+
 
     /*
-     * Observer 延遲後使用 push message。
-     *
-     * targetId：
-     * - 私訊測試時 = userId
-     * - 正式群組時 = groupId
+     * 最後一道額度防線：Observer 只使用當次 webhook 的 replyToken。
+     * 超過安全期限直接放棄，絕不轉成 pushMessage。
      */
-    await lineClient.pushMessage(
-      {
-        to: targetId,
+    if (!isReplyWindowOpen(replyDeadlineAt)) {
+      console.log(`[Observer][${traceId}] ABORT reply-window-closed-before-send elapsed=${elapsed()}ms`);
+      return;
+    }
 
+    console.log(`[Observer][${traceId}] REPLY_START elapsed=${elapsed()}ms replyRemaining=${Math.max(0, replyDeadlineAt - Date.now())}ms`);
+
+    await lineClient.replyMessage(
+      {
+        replyToken,
         messages: [
           {
             type: 'text',
@@ -832,24 +929,28 @@ REPLY: 你的短句
     /*
      * 成功發送才記錄為真正插話。
      */
+    console.log(`[Observer][${traceId}] REPLY_SUCCESS elapsed=${elapsed()}ms`);
+
     onPassiveReply(
       replyText,
     );
 
 
-    const state =
-      getState(
-        targetId,
-      );
-
-
-    state.lastPassiveReplyAt =
+    currentState.lastPassiveReplyAt =
       Date.now();
+
+    if (
+      mode === 'greeting_morning' ||
+      mode === 'greeting_night'
+    ) {
+      currentState.greetingLastSeenAt =
+        Date.now();
+    }
 
   } catch (error) {
 
     console.error(
-      'Observer error:',
+      `[Observer][${traceId}] ERROR elapsed=${elapsed()}ms`,
       error,
     );
 
@@ -877,8 +978,7 @@ function buildObserverInstruction(
 
 請自然接住這個家庭招呼。
 
-現在已經稍微等待過了，
-不要搶在家人前面。
+這是即時被動插話，不需要刻意等待。
 
 只需要一句很短的回應。
       `.trim();
@@ -890,8 +990,7 @@ function buildObserverInstruction(
 
 請自然接住這個家庭招呼。
 
-現在已經稍微等待過了，
-不要搶在家人前面。
+這是即時被動插話，不需要刻意等待。
 
 只需要一句很短的回應。
       `.trim();
@@ -1103,6 +1202,15 @@ function isFoodRelated(
  * 日常狀態
  * ========================================================= */
 
+function normalizeDailyKey(
+  text: string,
+): string {
+  return text
+    .trim()
+    .replace(/[，。！？、,.!?～~\s]+/g, '');
+}
+
+
 function isDailyState(
   text: string,
 ): boolean {
@@ -1130,7 +1238,7 @@ function isDailyState(
     /回家了/,
     /到家了/,
     /回來了/,
-    /下班了/,
+    /下班/,
     /出門了/,
  /出發了/,
  /出門/,

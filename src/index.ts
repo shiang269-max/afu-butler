@@ -12,6 +12,10 @@ import {
 import { resolveFamilyTarget } from './family-resolver';
 
 import {
+  handleFunctionHelp,
+} from './function-help';
+
+import {
   handleReminderMessage,
 } from './reminder-handler';
 
@@ -324,6 +328,7 @@ function hasReminderInvocation(
     '內內',
     '喳子',
     '渣子',
+    '阿福',
   ].some(
     (word) => message.includes(word),
   );
@@ -345,6 +350,8 @@ function cleanTriggerWords(
     .replace(/總管/g, '')
     .replace(/內內/g, '')
     .replace(/喳子/g, '')
+    .replace(/渣子/g, '')
+    .replace(/阿福/g, '')
     .trim();
 }
 
@@ -1558,6 +1565,73 @@ try {
       fallbackError,
     );
   }
+
+  return;
+}
+
+/*
+ * =====================================================
+ * Function Help
+ * =====================================================
+ *
+ * 群組可直接操作功能的說明入口。
+ *
+ * 必須使用呼叫詞，例如：
+ *
+ * - 喳子，有什麼功能
+ * - 喳子，功能
+ * - 喳子，投票怎麼用
+ * - 喳子，提醒怎麼用
+ * - 喳子，位置怎麼用
+ *
+ * Function Help 不使用 AI，
+ * 直接由固定功能目錄回覆。
+ *
+ * 必須放在 Vote 之前，
+ * 避免「投票怎麼用」被當成新的投票指令。
+ * =====================================================
+ */
+
+const functionHelpResult =
+  handleFunctionHelp(
+    userMessage,
+    hasTrigger,
+  );
+
+if (functionHelpResult.handled) {
+  const functionHelpReply =
+    functionHelpResult.reply ||
+    '目前沒有找到這個功能的說明。';
+
+  await lineClient.replyMessage({
+    replyToken:
+      event.replyToken,
+
+    messages: [
+      {
+        type:
+          'text',
+
+        text:
+          functionHelpReply.slice(
+            0,
+            5000,
+          ),
+      },
+    ],
+  });
+
+  addToMemory(
+    conversationKey,
+    'user',
+    userMessage,
+  );
+
+  addToMemory(
+    conversationKey,
+    'assistant',
+    functionHelpReply,
+  );
 
   return;
 }

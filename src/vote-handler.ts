@@ -10,7 +10,6 @@ import {
   startVoting,
   castVote,
   finishVote,
-  cancelVote,
   resolveVoteTie,
 } from './vote';
 
@@ -54,29 +53,16 @@ const pendingVoteStarts =
 /**
  * Normalize common controller invocation words.
  */
-function hasRequiredVoteInvocation(
-  message: string,
-): boolean {
-  return /^\s*@?(?:大內總管|總管|內內|喳子|渣子)/.test(
-    message,
-  );
-}
-
-
 function cleanTriggerWords(
   message: string,
 ): string {
-  const match =
-    message.match(
-      /^\s*@?(?:大內總管|總管|內內|喳子|渣子)[\s,，:：、]*/,
-    );
-
-  if (!match) {
-    return message.trim();
-  }
-
   return message
-    .slice(match[0].length)
+    .replace(/大內總管/g, '')
+    .replace(/總管/g, '')
+    .replace(/內內/g, '')
+    .replace(/喳子/g, '')
+    .replace(/渣子/g, '')
+    .replace(/阿福/g, '')
     .trim();
 }
 
@@ -84,17 +70,12 @@ function cleanTriggerWords(
 /**
  * Decide whether this message is explicitly asking to start a vote.
  *
- * Every new vote command must begin with an explicit controller
- * invocation word. Once a Vote Session exists, subsequent session
- * replies do not require the invocation word again.
+ * Deliberately conservative so ordinary conversation is not
+ * swallowed by the vote system.
  */
 function hasVoteStartIntent(
   message: string,
 ): boolean {
-  if (!hasRequiredVoteInvocation(message)) {
-    return false;
-  }
-
   const text =
     cleanTriggerWords(message);
 
@@ -106,17 +87,12 @@ function hasVoteStartIntent(
     '開投票',
     '建立投票',
     '發起投票',
-    '幫我們投票',
-    '幫我投票',
     '投票一下',
     '投票決定',
     '投票決定一下',
-    '我們要投票',
-    '大家要投票',
-    '一起來投票',
-    '一起投票',
     '我們投票',
     '大家投票',
+    '一起投票',
     '投票',
   ].some(
     (keyword) =>
@@ -227,18 +203,16 @@ function parseInlineOptions(
   const colonIndex =
     cleaned.search(/[:：]/);
 
-  const optionText =
-    colonIndex >= 0
-      ? cleaned
-          .slice(
-            colonIndex + 1,
-          )
-          .trim()
-      : cleaned.trim();
-
-  if (!optionText) {
+  if (colonIndex < 0) {
     return [];
   }
+
+  const optionText =
+    cleaned
+      .slice(
+        colonIndex + 1,
+      )
+      .trim();
 
   if (!optionText) {
     return [];
@@ -439,11 +413,12 @@ function parseExplicitVoteInput(
   }
 
   const patterns = [
-    /^(?:我要投|我選擇|我要改成|我投|我選|我要)\s*(.+)$/i,
+    /^(?:我要|我投|我選|我要投|我選擇)\s*(.+)$/i,
     /^選\s*(.+)$/,
     /^投\s*(.+)$/,
     /^改投\s*(.+)$/,
     /^改成\s*(.+)$/,
+    /^我要改成\s*(.+)$/,
   ];
 
   for (const pattern of patterns) {
@@ -482,63 +457,41 @@ function parseRejectedOption(
   vote: Vote,
   message: string,
 ): Vote['options'][number] | null {
-
   const text =
     message
       .trim()
       .replace(/\s+/g, ' ');
 
-  if (!text) {
-    return null;
-  }
-
-  /**
-   * Prefer exact semantic forms based on the actual option text.
-   *
-   * Examples:
-   *
-   *   option = "火鍋"
-   *   message = "我不想吃火鍋"
-   *
-   *   option = "吃東西"
-   *   message = "我不想吃東西"
-   *
-   * The second case is important because simply capturing the
-   * text after "我不想吃" would return "東西", while the actual
-   * candidate is "吃東西".
-   */
-  const directNegativePrefixes = [
-    '我不想',
-    '不想',
-    '不要',
-    '我不要',
-    '不選',
-    '不要選',
+  const negativePatterns = [
+    /^我不想吃(.+)$/,
+    /^不想吃(.+)$/,
+    /^不要吃(.+)$/,
+    /^不想要(.+)$/,
+    /^不要(.+)$/,
+    /^不選(.+)$/,
+    /^不要選(.+)$/,
+    /^我不要(.+)$/,
   ];
 
   for (
-    const prefix
-    of directNegativePrefixes
+    const pattern
+    of negativePatterns
   ) {
+    const match =
+      text.match(pattern);
 
-    if (!text.startsWith(prefix)) {
+    if (!match?.[1]) {
       continue;
     }
 
-    const candidateText =
-      text
-        .slice(prefix.length)
-        .trim();
-
-    if (!candidateText) {
-      continue;
-    }
+    const candidate =
+      match[1].trim();
 
     const exact =
       vote.options.find(
         (option) =>
           option.text ===
-          candidateText,
+          candidate,
       );
 
     if (exact) {
@@ -546,40 +499,9 @@ function parseRejectedOption(
     }
   }
 
-  /**
-   * "我不想吃火鍋"
-   *
-   * The generic prefix matching above produces "吃火鍋",
-   * so try the natural Chinese "不想吃 + option" form
-   * as a second pass.
-   */
-  const eatPrefix =
-    '我不想吃';
-
-  if (text.startsWith(eatPrefix)) {
-
-    const candidateText =
-      text
-        .slice(eatPrefix.length)
-        .trim();
-
-    if (candidateText) {
-
-      const exact =
-        vote.options.find(
-          (option) =>
-            option.text ===
-            candidateText,
-        );
-
-      if (exact) {
-        return exact;
-      }
-    }
-  }
-
   return null;
 }
+
 
 
 function isConfirmCommand(
@@ -599,7 +521,6 @@ function isConfirmCommand(
     '確認',
     '確定',
     '結束',
-    '結束投票',
     '結束上一輪',
     '先結束',
     '同意',
@@ -619,23 +540,6 @@ function isStartCommand(
     '開始投票',
     '可以開始',
     '確認開始',
-  ].includes(text);
-}
-
-
-function isCancelCommand(
-  message: string,
-): boolean {
-  const text =
-    message
-      .replace(/\s+/g, '')
-      .toLowerCase();
-
-  return [
-    '取消',
-    '取消投票',
-    '取消這場投票',
-    '不投了',
   ].includes(text);
 }
 
@@ -1009,13 +913,19 @@ async function handlePendingVoteStart(
   }
 
   try {
+    const finished =
+      finishVote(
+        groupId,
+      );
+
     /**
-     * ACTIVE：真正結束目前投票並公布結果。
-     * SETUP / COLLECTING_OPTIONS / READY：尚未正式開始，
-     * 因此「先結束上一場」代表取消這場準備中的投票。
-     * TIE：不能靜默處理，必須先解決平手。
+     * A tied vote cannot be replaced silently.
+     * The current vote remains active in TIE state.
      */
-    if (currentVote.status === 'TIE') {
+    if (
+      finished.state ===
+      'TIE'
+    ) {
       pendingVoteStarts.delete(
         groupId,
       );
@@ -1024,45 +934,13 @@ async function handlePendingVoteStart(
         handled: true,
         message:
           [
-            tiePrompt(
-              currentVote,
+            finishPrompt(
+              finished,
             ),
             '',
             '請先處理這場平手投票，再建立新的投票。',
           ].join('\n'),
       };
-    }
-
-    if (currentVote.status === 'ACTIVE') {
-      const finished =
-        finishVote(
-          groupId,
-        );
-
-      if (
-        finished.state ===
-        'TIE'
-      ) {
-        pendingVoteStarts.delete(
-          groupId,
-        );
-
-        return {
-          handled: true,
-          message:
-            [
-              finishPrompt(
-                finished,
-              ),
-              '',
-              '請先處理這場平手投票，再建立新的投票。',
-            ].join('\n'),
-        };
-      }
-    } else {
-      cancelVote(
-        groupId,
-      );
     }
 
     pendingVoteStarts.delete(
@@ -1082,7 +960,7 @@ async function handlePendingVoteStart(
       message:
         error instanceof Error
           ? error.message
-          : '處理目前投票時發生問題。',
+          : '結束目前投票時發生問題。',
     };
   }
 }
@@ -1197,43 +1075,18 @@ export async function handleVoteMessage(
     ) {
 
       if (
-        isCancelCommand(text)
-        ||
-        /^(?:結束投票|結束這場投票)$/.test(
-          text
-            .replace(/\s+/g, ''),
+        isMemberOptionSource(
+          text,
         )
-      ) {
-        cancelVote(groupId);
-
-        return {
-          handled: true,
-          message:
-            '這場尚未開始的投票已取消。',
-        };
-      }
-
-      const normalizedSetupChoice =
-        text
-          .replace(/\s+/g, '')
-          .toLowerCase();
-
-      const choseMembers =
-        normalizedSetupChoice === '1' ||
-        isMemberOptionSource(text);
-
-      const choseAI =
-        normalizedSetupChoice === '2' ||
-        isAiOptionSource(text);
-
-      if (
-        choseMembers ||
-        choseAI
+        ||
+        isAiOptionSource(
+          text,
+        )
       ) {
 
         const source:
           VoteOptionSource =
-          choseAI
+          isAiOptionSource(text)
             ? 'AI'
             : 'MEMBERS';
 
@@ -1305,23 +1158,6 @@ export async function handleVoteMessage(
       vote.status ===
       'COLLECTING_OPTIONS'
     ) {
-
-      if (
-        isCancelCommand(text)
-        ||
-        /^(?:結束投票|結束這場投票)$/.test(
-          text
-            .replace(/\s+/g, ''),
-        )
-      ) {
-        cancelVote(groupId);
-
-        return {
-          handled: true,
-          message:
-            '這場尚未開始的投票已取消。',
-        };
-      }
 
       const count =
         parseParticipantCount(
@@ -1549,119 +1385,6 @@ export async function handleVoteMessage(
       vote.status ===
       'READY'
     ) {
-
-      /**
-       * -------------------------------------------------------
-       * AI-generated candidate list can still be discussed
-       * before the formal vote begins.
-       *
-       * Example:
-       * 「我不想吃東西」
-       *
-       * This must remove that candidate and ask the option
-       * generator for a replacement. It is intentionally handled
-       * only before ACTIVE, so the same sentence during voting
-       * remains ordinary conversation.
-       * -------------------------------------------------------
-       */
-
-      const rejected =
-        parseRejectedOption(
-          vote,
-          text,
-        );
-
-      if (
-        rejected
-        &&
-        vote.optionSource ===
-        'AI'
-      ) {
-
-        removeVoteOption(
-          groupId,
-          rejected.text,
-        );
-
-        vote =
-          getActiveVote(
-            groupId,
-          )!;
-
-        const replacements =
-          await generateOptionsForVote(
-            vote,
-            options,
-          );
-
-        if (
-          replacements.length
-        ) {
-
-          addVoteOptions(
-            groupId,
-            replacements.slice(
-              0,
-              1,
-            ),
-          );
-
-        }
-
-        const updated =
-          getActiveVote(
-            groupId,
-          )!;
-
-        return {
-
-          handled:
-            true,
-
-          message:
-            updated.options.length >= 2
-              ? readyPrompt(
-                  updated,
-                )
-              : [
-                  `已移除：「${rejected.text}」。`,
-                  '',
-                  optionsPrompt(),
-                ].join('\n'),
-
-        };
-
-      }
-
-
-      if (
-        isCancelCommand(text)
-        ||
-        /^(?:結束投票|結束這場投票)$/.test(
-          text
-            .replace(/\s+/g, ''),
-        )
-      ) {
-        try {
-          cancelVote(
-            groupId,
-          );
-
-          return {
-            handled: true,
-            message:
-              '這場尚未開始的投票已取消。',
-          };
-        } catch (error) {
-          return {
-            handled: true,
-            message:
-              error instanceof Error
-                ? error.message
-                : '取消投票失敗。',
-          };
-        }
-      }
 
       const count =
         parseParticipantCount(
