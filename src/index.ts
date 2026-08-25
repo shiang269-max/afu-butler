@@ -1676,22 +1676,27 @@ if (functionHelpResult.handled) {
  */
 
 try {
-  const voteGroupId =
+  const voteContextId =
     event.source.type === 'group'
       ? event.source.groupId
-      : '';
+      : event.source.type === 'user'
+        ? event.source.userId
+        : '';
 
   /**
-   * 第一版投票只處理群組。
+   * Vote Session context:
    *
-   * 私訊不建立家庭群組投票，
-   * 避免 groupId 缺失造成資料混用。
+   * - 群組 → groupId
+   * - 私訊 → userId
+   *
+   * 私訊使用 userId 作為獨立 Vote Session，
+   * 不與家庭群組 Vote 共用狀態。
    */
-  if (voteGroupId) {
+  if (voteContextId) {
     const voteResult =
       await handleVoteMessage({
         groupId:
-          voteGroupId,
+          voteContextId,
 
         userId:
           event.source.userId || '',
