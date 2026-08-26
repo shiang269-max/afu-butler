@@ -13,6 +13,22 @@ type FunctionDefinition = {
 };
 
 
+type FunctionHelpSelectionSession = {
+  createdAt: number;
+};
+
+
+const FUNCTION_HELP_SELECTION_TIMEOUT_MS =
+  60 * 1000;
+
+
+const functionHelpSelectionSessions =
+  new Map<
+    string,
+    FunctionHelpSelectionSession
+  >();
+
+
 const FUNCTIONS: FunctionDefinition[] = [
   {
     id: 'vote',
@@ -109,17 +125,19 @@ const FUNCTION_LIST_REPLY = [
   '3. 位置',
   '　位置分享、目前位置與附近相關操作。',
   '',
-  '如果想知道其中一項，可以直接加上呼叫詞詢問。',
+  '想了解哪一項？',
+  '直接回覆數字 1、2、3，',
+  '或直接輸入「投票」、「提醒」、「位置」。',
   '',
   '例如：',
-  '阿福，投票',
-  '阿福，提醒詳細說明',
-  '阿福，位置可以做什麼',
+  '1',
+  '投票',
 ].join('\n');
 
 
 const LIST_INTENT_PATTERNS = [
-  /^(?:有什麼|有哪些|目前有哪些|能做什麼|可以做什麼)(?:功能|功能可以用|可以使用)?$/,
+  /^(?:你)?(?:有什麼|有哪些|目前有哪些)(?:功能|功能可以用|可以使用)?$/,
+  /^(?:你)?(?:能做什麼|可以做什麼|會做什麼|會什麼|能幹嘛|可以幹嘛|會幹嘛)$/,
   /^(?:功能|功能列表|功能清單|查看功能|查看有哪些功能)$/,
 ];
 
@@ -198,12 +216,69 @@ function findFunction(
 }
 
 
+function findFunctionBySelection(
+  message: string,
+): FunctionDefinition | null {
+  const normalized =
+    normalizeText(
+      message,
+    );
+
+  if (
+    normalized === '1'
+  ) {
+    return FUNCTIONS.find(
+      (item) =>
+        item.id === 'vote',
+    ) || null;
+  }
+
+  if (
+    normalized === '2'
+  ) {
+    return FUNCTIONS.find(
+      (item) =>
+        item.id === 'reminder',
+    ) || null;
+  }
+
+  if (
+    normalized === '3'
+  ) {
+    return FUNCTIONS.find(
+      (item) =>
+        item.id === 'location',
+    ) || null;
+  }
+
+  for (const item of FUNCTIONS) {
+    if (
+      item.keywords.some(
+        (keyword) =>
+          normalized === keyword,
+      )
+    ) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+
 function hasListIntent(
   message: string,
 ): boolean {
+  const normalized =
+    normalizeText(
+      message,
+    );
+
   return LIST_INTENT_PATTERNS.some(
     (pattern) =>
-      pattern.test(message),
+      pattern.test(
+        normalized,
+      ),
   );
 }
 
@@ -228,10 +303,226 @@ function hasExecutionIntent(
 }
 
 
+function createSelectionSession(
+  contextId: string,
+): void {
+  if (!contextId) {
+    return;
+  }
+
+  functionHelpSelectionSessions.set(
+    contextId,
+    {
+      createdAt:
+        Date.now(),
+    },
+  );
+}
+
+
+function clearSelectionSession(
+  contextId: string,
+): void {
+  if (!contextId) {
+    return;
+  }
+
+  functionHelpSelectionSessions.delete(
+    contextId,
+  );
+}
+
+
+function getActiveSelectionSession(
+  contextId: string,
+): FunctionHelpSelectionSession | null {
+  if (!contextId) {
+    return null;
+  }
+
+  const session =
+    functionHelpSelectionSessions.get(
+      contextId,
+    );
+
+  if (!session) {
+    return null;
+  }
+
+  const elapsed =
+    Date.now() -
+    session.createdAt;
+
+  if (
+    elapsed >
+    FUNCTION_HELP_SELECTION_TIMEOUT_MS
+  ) {
+    clearSelectionSession(
+      contextId,
+    );
+
+    return null;
+  }
+
+  return session;
+}
+
+
+/*
+ * =====================================================
+ * 後續選擇
+ * =====================================================
+ *
+ * 功能列表建立等待狀態後，
+ * 只處理「下一句」的明確選擇：
+ *
+ * 1 / 2 / 3
+ * 投票 / 提醒 / 位置
+ *
+ * 其他任何內容：
+ *
+ * 立即清除等待狀態
+ * ↓
+ * 不接管
+ *
+ * 因此 Function Help 不會長時間影響後續聊天。
+ * =====================================================
+ */
+
+function handleSelectionSession(
+  message: string,
+  contextId: string,
+): FunctionHelpResult {
+  const session =
+    getActiveSelectionSession(
+      contextId,
+    );
+
+  if (!session) {
+    return {
+      handled: false,
+    };
+  }
+
+  const normalized =
+    normalizeText(
+      removeKnownTriggerPrefix(
+        message,
+      ),
+    );
+
+  const targetFunction =
+    findFunctionBySelection(
+      normalized,
+    );
+
+  /*
+   * 下一句不是明確選項：
+   *
+   * 立即結束等待狀態，
+   * 交回正式功能／Observer／一般 AI。
+   */
+
+  if (!targetFunction) {
+    clearSelectionSession(
+      contextId,
+    );
+
+    return {
+      handled: false,
+    };
+  }
+
+  /*
+   * 正式執行指令優先。
+   *
+   * 例如：
+   *
+   * 投票今天晚餐吃什麼
+   * 提醒我明天倒垃圾
+   * 附近有什麼
+   *
+   * 不能被 Function Help 後續選擇接管。
+   */
+
+  if (
+    hasExecutionIntent(
+      normalized,
+    )
+  ) {
+    clearSelectionSession(
+      contextId,
+    );
+
+    return {
+      handled: false,
+    };
+  }
+
+  /*
+   * 成功選擇後立即清除狀態。
+   */
+
+  clearSelectionSession(
+    contextId,
+  );
+
+  return {
+    handled: true,
+    reply:
+      targetFunction.detail,
+  };
+}
+
+
 export function handleFunctionHelp(
   message: string,
   hasTrigger: boolean,
+  contextId = '',
 ): FunctionHelpResult {
+  /*
+   * =====================================================
+   * 先處理功能列表後的一次性選擇
+   * =====================================================
+   *
+   * 這裡不要求再次使用呼叫詞。
+   *
+   * 例如：
+   *
+   * 總管有什麼功能
+   * ↓
+   * 功能列表
+   * ↓
+   * 1
+   * ↓
+   * 投票說明
+   *
+   * 但只限於同一個 Context、
+   * 1 分鐘內的下一句。
+   * =====================================================
+   */
+
+  const selectionResult =
+    handleSelectionSession(
+      message,
+      contextId,
+    );
+
+  if (
+    selectionResult.handled
+  ) {
+    return selectionResult;
+  }
+
+  /*
+   * 如果目前還有等待 Session，
+   * 代表上一句不是有效選項，
+   * handleSelectionSession 已經清除。
+   *
+   * 接下來是否重新進入 Function Help，
+   * 仍依照 hasTrigger 決定。
+   */
+
   if (!hasTrigger) {
     return {
       handled: false,
@@ -251,11 +542,21 @@ export function handleFunctionHelp(
     };
   }
 
+  /*
+   * =====================================================
+   * 功能總覽
+   * =====================================================
+   */
+
   if (
     hasListIntent(
       normalized,
     )
   ) {
+    createSelectionSession(
+      contextId,
+    );
+
     return {
       handled: true,
       reply:
@@ -278,14 +579,6 @@ export function handleFunctionHelp(
    * =====================================================
    * 正式執行優先
    * =====================================================
-   *
-   * 例如：
-   *
-   * 投票今天玩什麼遊戲
-   * 投票晚上去哪裡
-   *
-   * 不能被 Function Help 接管。
-   * =====================================================
    */
 
   if (
@@ -300,15 +593,17 @@ export function handleFunctionHelp(
 
   /*
    * =====================================================
-   * 只要明確提到已知功能名稱，
-   * 就可以直接查看該功能說明。
+   * 直接詢問功能
+   * =====================================================
    *
    * 例如：
    *
-   * 投票
-   * 投票怎麼用
-   * 投票詳細說明
-   * 投票可以做什麼
+   * 總管，投票
+   * 總管，投票怎麼用
+   * 總管，提醒詳細說明
+   *
+   * 直接說明，
+   * 不建立等待狀態。
    * =====================================================
    */
 
@@ -328,4 +623,23 @@ export function handleFunctionHelp(
   return {
     handled: false,
   };
+}
+
+
+/*
+ * =====================================================
+ * 測試用途
+ * =====================================================
+ *
+ * 正式執行流程不需要直接操作 Session。
+ * 這個函式只提供測試環境確認 Context 狀態隔離。
+ * =====================================================
+ */
+
+export function clearFunctionHelpSession(
+  contextId: string,
+): void {
+  clearSelectionSession(
+    contextId,
+  );
 }
