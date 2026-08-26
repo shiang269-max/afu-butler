@@ -19,6 +19,11 @@ import {
   clearPendingReminderState,
 } from './reminder-state';
 
+import {
+  buildReminderResponse,
+} from './styles/style-response';
+
+
 /*
  * =========================================================
  * Reminder Handler 2.0
@@ -1483,7 +1488,9 @@ function createDuplicateAfterConfirmation(
     target: reminder.target,
     reminders: [reminder],
     message:
-      `喳，已再替主上添下一道相同的提醒：${formatReminderTime(reminder.remindAt)}｜${reminder.content}。`,
+      buildReminderResponse(
+        `喳，已再替主上添下一道相同的提醒：${formatReminderTime(reminder.remindAt)}｜${reminder.content}。`,
+      ),
     mentionUserIds:
       getCreateMentionInfo(
         [reminder],
@@ -2396,7 +2403,9 @@ async function handlePendingState(
     return {
       handled: true,
       message:
-        '主上，原本那道 Reminder 已經不存在或已經完成了。奴才不敢擅自動其他旨意。',
+        buildReminderResponse(
+          '主上，原本那道 Reminder 已經不存在或已經完成了。奴才不敢擅自動其他旨意。',
+        ),
     };
   }
 
@@ -2512,7 +2521,9 @@ async function handlePendingState(
             action: 'authorization-confirmation',
             candidates: operatedReminders,
             message:
-              '主上，這次同時包含修改與取消，而且其中有需要授權的提醒。為避免只執行一半，請先分開處理需要授權的提醒。',
+              buildReminderResponse(
+                '主上，這次同時包含修改與取消，而且其中有需要授權的提醒。為避免只執行一半，請先分開處理需要授權的提醒。',
+              ),
           };
         }
 
@@ -2538,7 +2549,9 @@ async function handlePendingState(
                 action: 'selection-confirmation',
                 candidates: operatedReminders,
                 message:
-                  '主上，同一道提醒不能在同一句裡同時修改又取消。請把兩個操作分開說。',
+                  buildReminderResponse(
+                    '主上，同一道提醒不能在同一句裡同時修改又取消。請把兩個操作分開說。',
+                  ),
               };
             }
 
@@ -2589,7 +2602,9 @@ async function handlePendingState(
                 cancelled: false,
                 candidates: operatedReminders,
                 message:
-                  '主上，奴才知道要處理哪些提醒，但其中一段沒有聽清楚要改成什麼。這次沒有撤下或修改任何一道提醒。',
+                  buildReminderResponse(
+                    '主上，奴才知道要處理哪些提醒，但其中一段沒有聽清楚要改成什麼。這次沒有撤下或修改任何一道提醒。',
+                  ),
               };
             }
 
@@ -2625,7 +2640,9 @@ async function handlePendingState(
               cancelled: false,
               candidates: operatedReminders,
               message:
-                '主上，奴才驗證修改結果時發現有一道沒有成功。為避免只做一半，這次沒有撤下或修改任何一道提醒。',
+                buildReminderResponse(
+                  '主上，奴才驗證修改結果時發現有一道沒有成功。為避免只做一半，這次沒有撤下或修改任何一道提醒。',
+                ),
             };
           }
 
@@ -2643,7 +2660,9 @@ async function handlePendingState(
               cancelled: false,
               candidates: operatedReminders,
               message:
-                '主上，奴才在撤下其中一道提醒時遇到問題。為避免誤報結果，這次不回報為完整成功。',
+                buildReminderResponse(
+                  '主上，奴才在撤下其中一道提醒時遇到問題。為避免誤報結果，這次不回報為完整成功。',
+                ),
             };
           }
         }
@@ -2701,7 +2720,9 @@ async function handlePendingState(
           action: 'authorization-confirmation',
           candidates,
           message:
-            '主上，這幾道提醒沒有共同的授權人，為避免誤撤其他人的提醒，請分開指定取消。',
+            buildReminderResponse(
+              '主上，這幾道提醒沒有共同的授權人，為避免誤撤其他人的提醒，請分開指定取消。',
+            ),
         };
       }
 
@@ -2756,7 +2777,9 @@ async function handlePendingState(
             action: 'authorization-confirmation',
             candidates: selected,
             message:
-              '主上，這次多筆修改中有需要授權的提醒。為避免只修改其中一部分，請分開指定每一道提醒修改。',
+              buildReminderResponse(
+                '主上，這次多筆修改中有需要授權的提醒。為避免只修改其中一部分，請分開指定每一道提醒修改。',
+              ),
           };
         }
 
@@ -2774,7 +2797,9 @@ async function handlePendingState(
             action: 'authorization-confirmation',
             candidates: selected,
             message:
-              '主上，這道提醒沒有可確認的授權人，奴才不敢擅自修改。',
+              buildReminderResponse(
+                '主上，這道提醒沒有可確認的授權人，奴才不敢擅自修改。',
+              ),
           };
         }
 
@@ -2783,7 +2808,9 @@ async function handlePendingState(
           action: 'authorization-confirmation',
           candidates: selected,
           message:
-            `主上，這道提醒需要建立人或被提醒者確認修改。請由「${authorizationText(selected)}」其中一人回覆「同意」。`,
+            buildReminderResponse(
+              `主上，這道提醒需要建立人或被提醒者確認修改。請由「${authorizationText(selected)}」其中一人回覆「同意」。`,
+            ),
           mentionUserIds:
             authorizationUsers,
         };
@@ -2824,7 +2851,9 @@ async function handlePendingState(
           updated: false,
           candidates: selected,
           message:
-            '主上，奴才知道您要改哪幾道了，但還沒聽清楚要改成什麼時間或內容。',
+            buildReminderResponse(
+              '主上，奴才知道您要改哪幾道了，但還沒聽清楚要改成什麼時間或內容。',
+            ),
         };
       }
 
@@ -2859,7 +2888,9 @@ async function handlePendingState(
           updated: false,
           candidates: selected,
           message:
-            `主上，這次指定 ${selected.length} 道提醒，但實際成功修改 ${updated.length} 道。奴才沒有把未成功的提醒當成已修改。`,
+            buildReminderResponse(
+              `主上，這次指定 ${selected.length} 道提醒，但實際成功修改 ${updated.length} 道。奴才沒有把未成功的提醒當成已修改。`,
+            ),
         };
       }
 
@@ -2942,7 +2973,9 @@ async function handlePendingState(
       action: 'duplicate-confirmation',
       candidates,
       message:
-        '主上只要告訴奴才「要」或「不要」即可。',
+        buildReminderResponse(
+          '主上只要告訴奴才「要」或「不要」即可。',
+        ),
     };
   }
 
@@ -2967,7 +3000,9 @@ async function handlePendingState(
           action: 'authorization-confirmation',
           candidates,
           message:
-            `主上，這次確認需要由「${authorizationText(candidates)}」其中一人回覆「同意」。`,
+            buildReminderResponse(
+              `主上，這次確認需要由「${authorizationText(candidates)}」其中一人回覆「同意」。`,
+            ),
           mentionUserIds:
             authorizationUsers,
         };
@@ -3019,7 +3054,9 @@ async function handlePendingState(
         action: 'cancel',
         cancelled: false,
         message:
-          '喳，奴才保留原本的提醒，沒有撤下。',
+          buildReminderResponse(
+            '喳，奴才保留原本的提醒，沒有撤下。',
+          ),
       };
     }
   }
@@ -3039,7 +3076,9 @@ async function handlePendingState(
           action: 'authorization-confirmation',
           candidates,
           message:
-            `主上，這次確認需要由「${authorizationText(candidates)}」其中一人回覆「同意」。`,
+            buildReminderResponse(
+              `主上，這次確認需要由「${authorizationText(candidates)}」其中一人回覆「同意」。`,
+            ),
           mentionUserIds: authorizationUsers,
         };
       }
@@ -3088,7 +3127,9 @@ async function handlePendingState(
           content: updated.content,
           target: updated.target,
           message:
-            `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
+            buildReminderResponse(
+              `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
+            ),
         };
       }
 
@@ -3098,7 +3139,9 @@ async function handlePendingState(
         updated: false,
         candidates,
         message:
-          '主上，奴才收到同意了，但沒有成功修改那道提醒。',
+          buildReminderResponse(
+            '主上，奴才收到同意了，但沒有成功修改那道提醒。',
+          ),
       };
     }
 
@@ -3115,7 +3158,9 @@ async function handlePendingState(
         updated: false,
         candidates,
         message:
-          '喳，奴才保留原本的提醒，沒有修改。',
+          buildReminderResponse(
+            '喳，奴才保留原本的提醒，沒有修改。',
+          ),
       };
     }
   }
@@ -3157,7 +3202,9 @@ async function handlePendingState(
           action: 'authorization-confirmation',
           candidates: selected,
           message:
-            '主上，這幾道提醒沒有共同的授權人，為避免誤撤其他人的提醒，請分開指定取消。',
+            buildReminderResponse(
+              '主上，這幾道提醒沒有共同的授權人，為避免誤撤其他人的提醒，請分開指定取消。',
+            ),
         };
       }
 
@@ -3166,7 +3213,9 @@ async function handlePendingState(
         action: 'authorization-confirmation',
         candidates: selected,
         message:
-          `主上，已選定 ${selected.length} 道提醒。請由「${authorizationText(selected)}」其中一人回覆「同意」，奴才才會一次撤下。`,
+          buildReminderResponse(
+            `主上，已選定 ${selected.length} 道提醒。請由「${authorizationText(selected)}」其中一人回覆「同意」，奴才才會一次撤下。`,
+          ),
         mentionUserIds:
           authorizationUsers,
       };
@@ -3177,7 +3226,9 @@ async function handlePendingState(
       action: 'selection-confirmation',
       candidates,
       message:
-        '主上，修改一次只能指定一道 Reminder。請告訴奴才其中一個編號。',
+        buildReminderResponse(
+          '主上，修改一次只能指定一道 Reminder。請告訴奴才其中一個編號。',
+        ),
     };
   }
 
@@ -3191,7 +3242,9 @@ async function handlePendingState(
       action: 'selection-confirmation',
       candidates,
       message:
-        '主上，奴才還沒聽清楚您要處理哪一道。請直接說「第一個」、「第二個」，或說提醒內容。',
+        buildReminderResponse(
+          '主上，奴才還沒聽清楚您要處理哪一道。請直接說「第一個」、「第二個」，或說提醒內容。',
+        ),
     };
   }
 
@@ -3209,7 +3262,9 @@ async function handlePendingState(
       action: 'authorization-confirmation',
       candidates: [selected],
       message:
-        `主上，這道提醒需要建立人或被提醒的人確認。可由「${authorizationText([selected])}」其中一人回覆「同意」。`,
+        buildReminderResponse(
+          `主上，這道提醒需要建立人或被提醒的人確認。可由「${authorizationText([selected])}」其中一人回覆「同意」。`,
+        ),
       mentionUserIds:
         getCommonAuthorizedUsers([selected]),
     };
@@ -3227,7 +3282,9 @@ async function handlePendingState(
     action: 'update',
     candidates: [selected],
     message:
-      '主上，奴才已經找到您說的那一道。請把要改成的時間或內容告訴奴才。',
+      buildReminderResponse(
+        '主上，奴才已經找到您說的那一道。請把要改成的時間或內容告訴奴才。',
+      ),
   };
 }
 
@@ -3253,7 +3310,9 @@ function handleList(
       action: 'list',
       reminders: [],
       message:
-        '目前沒有符合條件的有效 Reminder。',
+        buildReminderResponse(
+          '目前沒有符合條件的有效 Reminder。',
+        ),
     };
   }
 
@@ -3295,7 +3354,9 @@ function handleList(
     action: 'list',
     reminders,
     message:
-      `喳，主上${periodText[parsed.queryPeriod || 'all']}共有 ${reminders.length} 道提醒：\n${lines.join('\n')}\n\n之後可以直接說「4取消」或「4改成10點」處理其中一道。`,
+      buildReminderResponse(
+        `喳，主上${periodText[parsed.queryPeriod || 'all']}共有 ${reminders.length} 道提醒：\n${lines.join('\n')}\n\n之後可以直接說「4取消」或「4改成10點」處理其中一道。`,
+      ),
   };
 }
 
@@ -3326,7 +3387,9 @@ function handleCancel(
       action: 'cancel',
       cancelled: false,
       message:
-        '主上，奴才沒有找到符合條件的有效 Reminder。',
+        buildReminderResponse(
+          '主上，奴才沒有找到符合條件的有效 Reminder。',
+        ),
     };
   }
 
@@ -3351,7 +3414,9 @@ function handleCancel(
         action: 'authorization-confirmation',
         candidates: [reminder],
         message:
-          '主上，這道提醒沒有可確認的授權人，奴才不敢擅自撤下。',
+          buildReminderResponse(
+            '主上，這道提醒沒有可確認的授權人，奴才不敢擅自撤下。',
+          ),
       };
     }
 
@@ -3360,7 +3425,9 @@ function handleCancel(
       action: 'authorization-confirmation',
       candidates: [reminder],
       message:
-        `主上，這道提醒是「${formatTargetList(reminder)}」的事項，建立人與被提醒者都可以確認取消。請由「${authorizationText([reminder])}」其中一人回覆「同意」。`,
+        buildReminderResponse(
+          `主上，這道提醒是「${formatTargetList(reminder)}」的事項，建立人與被提醒者都可以確認取消。請由「${authorizationText([reminder])}」其中一人回覆「同意」。`,
+        ),
       mentionUserIds:
         authorizationUsers,
     };
@@ -3392,7 +3459,9 @@ function handleCancel(
     action: 'selection-confirmation',
     candidates: reminders,
     message:
-      `主上，奴才找到 ${reminders.length} 道符合的旨意：\n${candidateText}\n請告訴奴才要撤哪一道；若要多道一起撤，直接說「4跟6」即可。`,
+      buildReminderResponse(
+        `主上，奴才找到 ${reminders.length} 道符合的旨意：\n${candidateText}\n請告訴奴才要撤哪一道；若要多道一起撤，直接說「4跟6」即可。`,
+      ),
   };
 }
 
@@ -3424,7 +3493,9 @@ function handleUpdate(
       action: 'update',
       updated: false,
       message:
-        '主上，奴才沒有找到符合條件的有效 Reminder。',
+        buildReminderResponse(
+          '主上，奴才沒有找到符合條件的有效 Reminder。',
+        ),
     };
   }
 
@@ -3455,7 +3526,9 @@ function handleUpdate(
       action: 'selection-confirmation',
       candidates: reminders,
       message:
-        `主上，奴才找到不只一道符合的旨意：\n${candidateText}\n請告訴奴才要修改哪一道。`,
+        buildReminderResponse(
+          `主上，奴才找到不只一道符合的旨意：\n${candidateText}\n請告訴奴才要修改哪一道。`,
+        ),
     };
   }
 
@@ -3477,7 +3550,9 @@ function handleUpdate(
       action: 'authorization-confirmation',
       candidates: [reminder],
       message:
-        `主上，這道提醒需要建立人或被提醒的人確認修改。請由「${authorizationText([reminder])}」其中一人回覆「同意」。`,
+        buildReminderResponse(
+          `主上，這道提醒需要建立人或被提醒的人確認修改。請由「${authorizationText([reminder])}」其中一人回覆「同意」。`,
+        ),
     };
   }
 
@@ -3498,7 +3573,9 @@ function handleUpdate(
       action: 'update',
       updated: false,
       message:
-        '主上，奴才沒有成功修改那道提醒。',
+        buildReminderResponse(
+          '主上，奴才沒有成功修改那道提醒。',
+        ),
     };
   }
 
@@ -3511,7 +3588,9 @@ function handleUpdate(
     content: updated.content,
     target: updated.target,
     message:
-      `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
+      buildReminderResponse(
+        `喳，已替主上把「${updated.content}」提醒改成 ${formatReminderTime(updated.remindAt)}。`,
+      ),
   };
 }
 
@@ -3759,7 +3838,9 @@ export async function handleReminderMessage(
       return {
         handled: true,
         message:
-          '主上，奴才這次沒有成功聽清楚 Reminder 指令。請再說一次，奴才不會擅自更動既有提醒。',
+          buildReminderResponse(
+            '主上，奴才這次沒有成功聽清楚 Reminder 指令。請再說一次，奴才不會擅自更動既有提醒。',
+          ),
       };
     }
 
