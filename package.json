@@ -19,7 +19,8 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@google/genai": "^2.16.0"

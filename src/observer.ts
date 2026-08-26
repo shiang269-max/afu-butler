@@ -1,6 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
 import { messagingApi } from '@line/bot-sdk';
 import { FamilyMember } from './family';
+import {
+  hasCallName,
+  cleanCallNames,
+} from './call-names';
 
 type ObserverCategory =
   | 'greeting'
@@ -115,12 +119,15 @@ const MAX_PASSIVE_CHARS =
 export function isObserverMuteCommand(
   message: string,
 ): boolean {
+  if (!hasCallName(message)) {
+    return false;
+  }
+
   const text =
-    message
-      .trim()
+    cleanCallNames(message)
       .replace(/[，。！？、,.!?～~\s]/g, '');
 
-  return /^(?:總管|內內|喳子)(?:閉嘴|先閉嘴|安靜|先安靜|不要插話|別插話|先不要插話|不要再插話|別再插話|少插嘴)$/.test(text);
+  return /^(?:閉嘴|先閉嘴|安靜|先安靜|不要插話|別插話|先不要插話|不要再插話|別再插話|少插嘴)$/.test(text);
 }
 
 
@@ -131,12 +138,15 @@ export function isObserverMuteCommand(
 export function isObserverUnmuteCommand(
   message: string,
 ): boolean {
+  if (!hasCallName(message)) {
+    return false;
+  }
+
   const text =
-    message
-      .trim()
+    cleanCallNames(message)
       .replace(/[，。！？、,.!?～~\s]/g, '');
 
-  return /^(?:總管|內內|喳子)(?:可以說話了|解除閉嘴|不用閉嘴了|不用安靜了|恢復插話|恢復說話)$/.test(text);
+  return /^(?:可以說話了|解除閉嘴|不用閉嘴了|不用安靜了|恢復插話|恢復說話)$/.test(text);
 }
 
 
