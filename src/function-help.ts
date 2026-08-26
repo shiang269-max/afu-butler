@@ -1,3 +1,8 @@
+import {
+  getActiveFunctionHelpResponse,
+} from './styles/style-response';
+
+
 export type FunctionHelpResult = {
   handled: boolean;
   reply?: string;
@@ -8,8 +13,6 @@ type FunctionDefinition = {
   id: string;
   name: string;
   keywords: string[];
-  summary: string;
-  detail: string;
 };
 
 
@@ -36,31 +39,6 @@ const FUNCTIONS: FunctionDefinition[] = [
     keywords: [
       '投票',
     ],
-    summary:
-      '建立群組投票，由系統協助整理候選項目、進行投票並統計結果。',
-    detail: [
-      '【投票】',
-      '',
-      '可以用來決定群組內的任何事情，例如：',
-      '晚餐吃什麼、今天玩什麼、晚上去哪裡、要不要出門等。',
-      '',
-      '開始方式：',
-      '直接加上呼叫詞後說明投票主題。',
-      '',
-      '例如：',
-      '阿福，投票今天玩什麼遊戲',
-      '阿福，投票晚上去哪裡',
-      '阿福，投票決定晚餐吃什麼',
-      '',
-      '之後可以選擇：',
-      '1. 大家自己提供候選項目',
-      '2. 系統協助提供候選項目',
-      '',
-      '設定參與人數並開始後，',
-      '參加者可以直接用數字或選項名稱投票，也可以改票。',
-      '',
-      '所有人完成投票後會自動結束，也可以手動結束。',
-    ].join('\n'),
   },
   {
     id: 'reminder',
@@ -69,21 +47,6 @@ const FUNCTIONS: FunctionDefinition[] = [
       '提醒',
       '提醒功能',
     ],
-    summary:
-      '建立、查詢、修改與取消提醒。',
-    detail: [
-      '【提醒】',
-      '',
-      '可以建立時間提醒，也可以查詢、修改或取消既有提醒。',
-      '',
-      '例如：',
-      '阿福，明天早上提醒我倒垃圾',
-      '阿福，下午五點提醒大家吃飯',
-      '阿福，查看提醒',
-      '阿福，取消第一個提醒',
-      '',
-      '提醒建立後，系統會依照確認流程完成設定。',
-    ].join('\n'),
   },
   {
     id: 'location',
@@ -93,46 +56,8 @@ const FUNCTIONS: FunctionDefinition[] = [
       '定位',
       '位置功能',
     ],
-    summary:
-      '根據目前位置或固定位置進行位置相關操作。',
-    detail: [
-      '【位置】',
-      '',
-      '可以分享 LINE 位置，讓總管取得目前位置，',
-      '也可以依目前位置或固定家附近進行相關操作。',
-      '',
-      '例如：',
-      '直接分享 LINE 位置',
-      '阿福，我現在在哪裡',
-      '阿福，附近有什麼',
-      '阿福，幫我找附近的店',
-      '',
-      '部分功能會依目前已保存的位置資料執行。',
-    ].join('\n'),
   },
 ];
-
-
-const FUNCTION_LIST_REPLY = [
-  '目前可以直接使用的功能：',
-  '',
-  '1. 投票',
-  '　建立群組投票、候選項目與投票統計。',
-  '',
-  '2. 提醒',
-  '　建立、查詢、修改與取消提醒。',
-  '',
-  '3. 位置',
-  '　位置分享、目前位置與附近相關操作。',
-  '',
-  '想了解哪一項？',
-  '直接回覆數字 1、2、3，',
-  '或直接輸入「投票」、「提醒」、「位置」。',
-  '',
-  '例如：',
-  '1',
-  '投票',
-].join('\n');
 
 
 const LIST_INTENT_PATTERNS = [
@@ -172,6 +97,7 @@ const EXECUTION_PATTERNS = [
 function normalizeText(
   message: string,
 ): string {
+
   return message
     .trim()
     .replace(
@@ -183,42 +109,57 @@ function normalizeText(
       '',
     )
     .trim();
+
 }
 
 
 function removeKnownTriggerPrefix(
   message: string,
 ): string {
+
   return message
     .replace(
       /^(?:大內總管|總管|內內|喳子|渣子|阿福)[\s，,、。！？!?.:：;；]*/i,
       '',
     )
     .trim();
+
 }
 
 
 function findFunction(
   message: string,
 ): FunctionDefinition | null {
-  for (const item of FUNCTIONS) {
+
+  for (
+    const item
+    of FUNCTIONS
+  ) {
+
     if (
       item.keywords.some(
         (keyword) =>
-          message.includes(keyword),
+          message.includes(
+            keyword,
+          ),
       )
     ) {
+
       return item;
+
     }
+
   }
 
   return null;
+
 }
 
 
 function findFunctionBySelection(
   message: string,
 ): FunctionDefinition | null {
+
   const normalized =
     normalizeText(
       message,
@@ -227,48 +168,63 @@ function findFunctionBySelection(
   if (
     normalized === '1'
   ) {
+
     return FUNCTIONS.find(
       (item) =>
         item.id === 'vote',
     ) || null;
+
   }
 
   if (
     normalized === '2'
   ) {
+
     return FUNCTIONS.find(
       (item) =>
         item.id === 'reminder',
     ) || null;
+
   }
 
   if (
     normalized === '3'
   ) {
+
     return FUNCTIONS.find(
       (item) =>
         item.id === 'location',
     ) || null;
+
   }
 
-  for (const item of FUNCTIONS) {
+  for (
+    const item
+    of FUNCTIONS
+  ) {
+
     if (
       item.keywords.some(
         (keyword) =>
           normalized === keyword,
       )
     ) {
+
       return item;
+
     }
+
   }
 
   return null;
+
 }
 
 
 function hasListIntent(
   message: string,
 ): boolean {
+
   const normalized =
     normalizeText(
       message,
@@ -280,32 +236,42 @@ function hasListIntent(
         normalized,
       ),
   );
+
 }
 
 
 function hasHelpIntent(
   message: string,
 ): boolean {
+
   return HELP_INTENT_WORDS.some(
     (word) =>
-      message.includes(word),
+      message.includes(
+        word,
+      ),
   );
+
 }
 
 
 function hasExecutionIntent(
   message: string,
 ): boolean {
+
   return EXECUTION_PATTERNS.some(
     (pattern) =>
-      pattern.test(message),
+      pattern.test(
+        message,
+      ),
   );
+
 }
 
 
 function createSelectionSession(
   contextId: string,
 ): void {
+
   if (!contextId) {
     return;
   }
@@ -317,12 +283,14 @@ function createSelectionSession(
         Date.now(),
     },
   );
+
 }
 
 
 function clearSelectionSession(
   contextId: string,
 ): void {
+
   if (!contextId) {
     return;
   }
@@ -330,12 +298,14 @@ function clearSelectionSession(
   functionHelpSelectionSessions.delete(
     contextId,
   );
+
 }
 
 
 function getActiveSelectionSession(
   contextId: string,
 ): FunctionHelpSelectionSession | null {
+
   if (!contextId) {
     return null;
   }
@@ -357,14 +327,51 @@ function getActiveSelectionSession(
     elapsed >
     FUNCTION_HELP_SELECTION_TIMEOUT_MS
   ) {
+
     clearSelectionSession(
       contextId,
     );
 
     return null;
+
   }
 
   return session;
+
+}
+
+
+/*
+ * =====================================================
+ * 依目前 Style 取得 Function Help 回覆
+ * =====================================================
+ */
+
+function getFunctionHelpReply(
+  functionId: string,
+): string {
+
+  const response =
+    getActiveFunctionHelpResponse();
+
+  switch (
+    functionId
+  ) {
+
+    case 'vote':
+      return response.voteDetail;
+
+    case 'reminder':
+      return response.reminderDetail;
+
+    case 'location':
+      return response.locationDetail;
+
+    default:
+      return '';
+
+  }
+
 }
 
 
@@ -393,15 +400,18 @@ function handleSelectionSession(
   message: string,
   contextId: string,
 ): FunctionHelpResult {
+
   const session =
     getActiveSelectionSession(
       contextId,
     );
 
   if (!session) {
+
     return {
       handled: false,
     };
+
   }
 
   const normalized =
@@ -424,6 +434,7 @@ function handleSelectionSession(
    */
 
   if (!targetFunction) {
+
     clearSelectionSession(
       contextId,
     );
@@ -431,6 +442,7 @@ function handleSelectionSession(
     return {
       handled: false,
     };
+
   }
 
   /*
@@ -450,6 +462,7 @@ function handleSelectionSession(
       normalized,
     )
   ) {
+
     clearSelectionSession(
       contextId,
     );
@@ -457,6 +470,7 @@ function handleSelectionSession(
     return {
       handled: false,
     };
+
   }
 
   /*
@@ -470,8 +484,11 @@ function handleSelectionSession(
   return {
     handled: true,
     reply:
-      targetFunction.detail,
+      getFunctionHelpReply(
+        targetFunction.id,
+      ),
   };
+
 }
 
 
@@ -480,6 +497,7 @@ export function handleFunctionHelp(
   hasTrigger: boolean,
   contextId = '',
 ): FunctionHelpResult {
+
   /*
    * =====================================================
    * 先處理功能列表後的一次性選擇
@@ -511,7 +529,9 @@ export function handleFunctionHelp(
   if (
     selectionResult.handled
   ) {
+
     return selectionResult;
+
   }
 
   /*
@@ -524,9 +544,11 @@ export function handleFunctionHelp(
    */
 
   if (!hasTrigger) {
+
     return {
       handled: false,
     };
+
   }
 
   const normalized =
@@ -537,9 +559,11 @@ export function handleFunctionHelp(
     );
 
   if (!normalized) {
+
     return {
       handled: false,
     };
+
   }
 
   /*
@@ -553,15 +577,20 @@ export function handleFunctionHelp(
       normalized,
     )
   ) {
+
     createSelectionSession(
       contextId,
     );
 
+    const response =
+      getActiveFunctionHelpResponse();
+
     return {
       handled: true,
       reply:
-        FUNCTION_LIST_REPLY,
+        response.functionList,
     };
+
   }
 
   const targetFunction =
@@ -570,9 +599,11 @@ export function handleFunctionHelp(
     );
 
   if (!targetFunction) {
+
     return {
       handled: false,
     };
+
   }
 
   /*
@@ -586,9 +617,11 @@ export function handleFunctionHelp(
       normalized,
     )
   ) {
+
     return {
       handled: false,
     };
+
   }
 
   /*
@@ -608,21 +641,28 @@ export function handleFunctionHelp(
    */
 
   if (
-    normalized === targetFunction.name ||
+    normalized ===
+      targetFunction.name
+    ||
     hasHelpIntent(
       normalized,
     )
   ) {
+
     return {
       handled: true,
       reply:
-        targetFunction.detail,
+        getFunctionHelpReply(
+          targetFunction.id,
+        ),
     };
+
   }
 
   return {
     handled: false,
   };
+
 }
 
 
@@ -639,7 +679,9 @@ export function handleFunctionHelp(
 export function clearFunctionHelpSession(
   contextId: string,
 ): void {
+
   clearSelectionSession(
     contextId,
   );
+
 }
