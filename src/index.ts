@@ -883,11 +883,13 @@ app.post(
              */
 
             const triggerWords = [
-              '大內總管',
-              '總管',
-              '內內',
-              '喳子',
-            ];
+  '大內總管',
+  '總管',
+  '內內',
+  '喳子',
+  '渣子',
+  '阿福',
+];
 
 
             const hasTrigger =
@@ -1596,6 +1598,7 @@ const functionHelpResult =
   handleFunctionHelp(
     userMessage,
     hasTrigger,
+    conversationKey,
   );
 
 if (functionHelpResult.handled) {
