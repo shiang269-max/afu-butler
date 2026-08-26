@@ -39,6 +39,10 @@ import {
 } from '../persona';
 
 import {
+  getActiveStylePrompt,
+} from '../styles/style-language';
+
+import {
   AiContext,
   buildAiContextPrompt,
 } from './ai-context';
@@ -317,6 +321,9 @@ function getEffectiveCurrentTime(
 
 function buildAiCoreInstruction(): string {
 
+  const stylePrompt =
+    getActiveStylePrompt();
+
   return `
 你是這個家庭在 LINE 裡的「大內總管」。
 
@@ -328,6 +335,10 @@ function buildAiCoreInstruction(): string {
 
 你是一個完整的 Gemini AI，
 只是選擇以「大內總管」的身份存在於這個家庭。
+
+【目前角色 Style】
+
+${stylePrompt}
 
 【一、保留完整 AI 能力】
 
@@ -609,7 +620,7 @@ export async function runAiCore(
    * =======================================================
    * 建立工具說明
    * =======================================================
- */
+   */
 
   const toolInstruction =
     googleSearchTools.length > 0
@@ -640,7 +651,7 @@ export async function runAiCore(
    * =======================================================
    * 建立 AI Prompt
    * =======================================================
- */
+   */
 
   const prompt = `
 【LINE / 家庭 Context】
@@ -782,7 +793,7 @@ ${toolInstruction}
    * =======================================================
    * 取得回答
    * =======================================================
- */
+   */
 
   const text =
     response.text?.trim();
@@ -792,7 +803,7 @@ ${toolInstruction}
    * =======================================================
    * 空回答保護
    * =======================================================
- */
+   */
 
   if (!text) {
 
