@@ -8,12 +8,9 @@ export default defineConfig({
   test: {
 
     include: [
-      'src/call-names.test.ts',
-    ],
 
-    exclude: [
-      'dist/**',
-      'node_modules/**',
+      'src/**/*.vitest.test.ts',
+
     ],
 
   },
