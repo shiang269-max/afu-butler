@@ -53,6 +53,10 @@ import {
   GoogleRoutesServiceResult,
 } from './google-routes-service';
 
+import {
+  buildLocationResponse,
+} from '../styles/style-response';
+
 
 /**
  * =========================================================
@@ -320,10 +324,10 @@ export function buildHomeRouteReply(
     );
 
 
-  return (
+  return buildLocationResponse(
     `從您現在的位置回家，` +
     `大約需要 ${duration}，` +
-    `距離約 ${distance}。`
+    `距離約 ${distance}。`,
   );
 }
 
@@ -397,7 +401,9 @@ export async function handleHomeRouteRequest(
         'current-location-unknown',
 
       replyText:
-        '總管目前不知道您在哪裡，請直接傳送 LINE 定位，或告訴我您現在的位置。',
+        buildLocationResponse(
+          '總管目前不知道您在哪裡，請直接傳送 LINE 定位，或告訴我您現在的位置。',
+        ),
     };
   }
 
@@ -431,7 +437,9 @@ export async function handleHomeRouteRequest(
         'home-location-unknown',
 
       replyText:
-        '總管目前還不知道固定的家位置，請先設定「家」的位置。',
+        buildLocationResponse(
+          '總管目前還不知道固定的家位置，請先設定「家」的位置。',
+        ),
     };
   }
 
@@ -492,7 +500,9 @@ export async function handleHomeRouteRequest(
         routeResult.error.code,
 
       replyText:
-        '總管暫時無法取得回家的路程資訊，請稍後再試。',
+        buildLocationResponse(
+          '總管暫時無法取得回家的路程資訊，請稍後再試。',
+        ),
     };
   }
 

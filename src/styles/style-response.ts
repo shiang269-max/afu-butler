@@ -43,6 +43,20 @@ export function buildVoteResponse(
 }
 
 
+export function buildLocationResponse(
+  content: string,
+): string {
+
+  return buildStyleResponse(
+    content,
+    {
+      preserveContent: true,
+    },
+  );
+
+}
+
+
 export interface StyleFunctionHelpResponse {
   functionList: string;
   voteDetail: string;
