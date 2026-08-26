@@ -15,6 +15,11 @@
 } from './vote';
 
 
+import {
+  buildVoteResponse,
+} from './styles/style-response';
+
+
 export interface VoteHandlerResult {
   handled: boolean;
   message?: string;
@@ -655,7 +660,8 @@ function removeOptionPrompt(
   vote: Vote,
   removedText: string,
 ): string {
-  return [
+  return buildVoteResponse(
+    [
     `已移除：「${removedText}」。`,
     '',
     '目前候選項目：',
@@ -664,7 +670,8 @@ function removeOptionPrompt(
     vote.status === 'READY'
       ? '候選項目已準備完成。可繼續調整，或確認後開始投票。'
       : optionsPrompt(),
-  ].join('\n');
+  ].join('\n'),
+  );
 }
 
 
@@ -728,26 +735,32 @@ function isTieAddOptionsCommand(
  * vocabulary and can later be moved to a response/persona layer.
  */
 function setupPrompt(): string {
-  return [
+  return buildVoteResponse(
+    [
     '已建立投票準備。',
     '',
     '請先決定候選選項由哪一方提供：',
     '1. 大家自己提供',
     '2. 由系統協助提供',
-  ].join('\n');
+  ].join('\n'),
+  );
 }
 
 
 function participantPrompt(): string {
-  return '請告訴我這次有幾位參與投票。';
+  return buildVoteResponse(
+    '請告訴我這次有幾位參與投票。',
+  );
 }
 
 
 function optionsPrompt(): string {
-  return [
+  return buildVoteResponse(
+    [
     '請提供本次投票的候選選項。',
     '可以直接用「火鍋、燒肉、牛肉麵」這種方式提供。',
-  ].join('\n');
+  ].join('\n'),
+  );
 }
 
 
@@ -762,7 +775,8 @@ function readyPrompt(
       )
       .join('\n');
 
-  return [
+  return buildVoteResponse(
+    [
     '候選項目已準備完成。',
     '',
     options,
@@ -770,7 +784,8 @@ function readyPrompt(
     `本次共有 ${vote.expectedVoterCount} 人參與。`,
     '可使用「剔除1」、「不要泡麵」、「移除 2」或「刪除義大利麵」調整候選項目。',
     '確認後請輸入「開始投票」。',
-  ].join('\n');
+  ].join('\n'),
+  );
 }
 
 
@@ -803,14 +818,16 @@ function activePrompt(
       )
       .join('\n');
 
-  return [
+  return buildVoteResponse(
+    [
     `投票開始：${vote.title}`,
     '',
     options,
     '',
     '可以直接輸入編號、選項名稱，或使用「我要投燒肉」這類說法。',
     `需要 ${vote.expectedVoterCount} 人完成投票。`,
-  ].join('\n');
+  ].join('\n'),
+  );
 }
 
 
@@ -831,7 +848,8 @@ function tiePrompt(
       )
       .join('\n');
 
-  return [
+  return buildVoteResponse(
+    [
     '投票結果平手：',
     '',
     tied,
@@ -839,7 +857,8 @@ function tiePrompt(
     '請選擇：',
     '1. 只針對平手項目再次投票',
     '2. 保留平手項目並加入其他候選項目',
-  ].join('\n');
+  ].join('\n'),
+  );
 }
 
 
@@ -855,11 +874,13 @@ function finishPrompt(
       .join('\n');
 
   if (result.state === 'EMPTY') {
-    return [
+    return buildVoteResponse(
+    [
       `投票「${result.vote.title}」已結束。`,
       '',
       '沒有收到任何投票。',
-    ].join('\n');
+    ].join('\n'),
+  );
   }
 
   if (result.state === 'TIE') {
@@ -1036,7 +1057,9 @@ async function handlePendingVoteStart(
     return {
       handled: true,
       message:
-        '已保留目前進行中的投票。',
+        buildVoteResponse(
+          '已保留目前進行中的投票。',
+        ),
     };
   }
 
@@ -1048,7 +1071,9 @@ async function handlePendingVoteStart(
     return {
       handled: true,
       message:
-        '目前已有一場投票進行中。請回覆「是」先結束目前投票，或回覆「否」保留目前投票。',
+        buildVoteResponse(
+          '目前已有一場投票進行中。請回覆「是」先結束目前投票，或回覆「否」保留目前投票。',
+        ),
     };
   }
 
@@ -1261,7 +1286,10 @@ export async function handleVoteMessage(
           if (!removedOption) {
             return {
               handled: true,
-              message: '找不到這個候選項目。',
+              message:
+                buildVoteResponse(
+                  '找不到這個候選項目。',
+                ),
             };
           }
 
@@ -1330,8 +1358,10 @@ export async function handleVoteMessage(
         return {
           handled: true,
           message:
-            `目前已有一場「${vote.title}」投票進行中。` +
-            '是否先結束目前投票，再建立新的投票？',
+            buildVoteResponse(
+              `目前已有一場「${vote.title}」投票進行中。` +
+              '是否先結束目前投票，再建立新的投票？',
+            ),
         };
       }
     }
@@ -1382,17 +1412,19 @@ export async function handleVoteMessage(
         return {
           handled: true,
           message:
-            source === 'AI'
-              ? [
-                  '已選擇由系統協助提供候選項目。',
-                  '',
-                  participantPrompt(),
-                ].join('\n')
-              : [
-                  '已選擇由大家提供候選項目。',
-                  '',
-                  participantPrompt(),
-                ].join('\n'),
+            buildVoteResponse(
+              source === 'AI'
+                ? [
+                    '已選擇由系統協助提供候選項目。',
+                    '',
+                    participantPrompt(),
+                  ].join('\n')
+                : [
+                    '已選擇由大家提供候選項目。',
+                    '',
+                    participantPrompt(),
+                  ].join('\n'),
+            ),
         };
       }
 
@@ -1418,7 +1450,9 @@ export async function handleVoteMessage(
           message:
             vote.optionSource ===
             'AI'
-              ? '請稍候，我會先建立候選項目。'
+              ? buildVoteResponse(
+                  '請稍候，我會先建立候選項目。',
+                )
               : optionsPrompt(),
         };
       }
@@ -1569,11 +1603,14 @@ export async function handleVoteMessage(
 
         return {
           handled: true,
-          message: [
-            `已移除：「${rejected.text}」。`,
-            '',
-            optionsPrompt(),
-          ].join('\n'),
+          message:
+            buildVoteResponse(
+              [
+                `已移除：「${rejected.text}」。`,
+                '',
+                optionsPrompt(),
+              ].join('\n'),
+            ),
         };
       }
 
@@ -2005,11 +2042,13 @@ export async function handleVoteMessage(
         return {
           handled: true,
           message:
-            [
-              '已保留平手項目。',
-              '',
-              optionsPrompt(),
-            ].join('\n'),
+            buildVoteResponse(
+              [
+                '已保留平手項目。',
+                '',
+                optionsPrompt(),
+              ].join('\n'),
+            ),
         };
       }
 

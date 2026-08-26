@@ -29,6 +29,20 @@ export function buildReminderResponse(
 }
 
 
+export function buildVoteResponse(
+  content: string,
+): string {
+
+  return buildStyleResponse(
+    content,
+    {
+      preserveContent: true,
+    },
+  );
+
+}
+
+
 export interface StyleFunctionHelpResponse {
   functionList: string;
   voteDetail: string;
