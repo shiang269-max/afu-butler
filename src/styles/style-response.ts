@@ -57,6 +57,20 @@ export function buildLocationResponse(
 }
 
 
+export function buildErrorResponse(
+  content: string,
+): string {
+
+  return buildStyleResponse(
+    content,
+    {
+      preserveContent: true,
+    },
+  );
+
+}
+
+
 export interface StyleFunctionHelpResponse {
   functionList: string;
   voteDetail: string;

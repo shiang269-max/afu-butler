@@ -16,11 +16,17 @@
 import fs from 'fs';
 import path from 'path';
 
+import {
+  buildStyleResponse,
+} from './styles/style-response';
+
+
 export type ErrorType =
   | 'rate_limit'
   | 'network'
   | 'api'
   | 'unknown';
+
 
 /*
  * 判斷錯誤類型。
@@ -31,6 +37,7 @@ export function classifyError(
 
   const message =
     getErrorMessage(error).toLowerCase();
+
 
   /*
    * API 限流 / 額度。
@@ -44,6 +51,7 @@ export function classifyError(
   ) {
     return 'rate_limit';
   }
+
 
   /*
    * 網路或暫時性連線問題。
@@ -60,6 +68,7 @@ export function classifyError(
     return 'network';
   }
 
+
   /*
    * 一般 API 錯誤。
    */
@@ -71,8 +80,10 @@ export function classifyError(
     return 'api';
   }
 
+
   return 'unknown';
 }
+
 
 /*
  * 統一取得錯誤文字。
@@ -87,11 +98,13 @@ export function getErrorMessage(
     return error.message;
   }
 
+
   if (
     typeof error === 'string'
   ) {
     return error;
   }
+
 
   try {
     return JSON.stringify(
@@ -101,6 +114,7 @@ export function getErrorMessage(
     return String(error);
   }
 }
+
 
 /*
  * 統一記錄錯誤。
@@ -115,16 +129,21 @@ export function logError(
 ): void {
 
   const type =
-    classifyError(error);
+    classifyError(
+      error,
+    );
 
   const errorMessage =
-    getErrorMessage(error);
+    getErrorMessage(
+      error,
+    );
 
   const timestamp =
     new Date().toISOString();
 
   const logLine =
     `[${timestamp}] [${type}] ${context}: ${errorMessage}`;
+
 
   /*
    * 保留原本的終端機紀錄。
@@ -133,6 +152,7 @@ export function logError(
     logLine,
     error,
   );
+
 
   /*
    * 寫入錯誤日誌。
@@ -145,6 +165,7 @@ export function logError(
         'logs',
       );
 
+
     /*
      * 如果 logs 不存在，自動建立。
      */
@@ -155,11 +176,13 @@ export function logError(
       },
     );
 
+
     const logFile =
       path.join(
         logDirectory,
         'error.log',
       );
+
 
     fs.appendFileSync(
       logFile,
@@ -167,7 +190,9 @@ export function logError(
       'utf8',
     );
 
-  } catch (logWriteError) {
+  } catch (
+    logWriteError
+  ) {
 
     /*
      * 如果連錯誤日誌都寫不進去，
@@ -180,42 +205,61 @@ export function logError(
   }
 }
 
+
 /*
  * 提供給使用者看到的
  * 總管式備援訊息。
  *
  * 注意：
- * 這些訊息故意保持簡短，
  * 不把 API 技術錯誤暴露給家人。
+ *
+ * 所有最終回覆統一經過
+ * Style Response Layer。
  */
 export function getFallbackMessage(
   error: unknown,
 ): string {
 
   const type =
-    classifyError(error);
+    classifyError(
+      error,
+    );
 
-  switch (type) {
+
+  let content: string;
+
+
+  switch (
+    type
+  ) {
 
     case 'rate_limit':
-      return (
-        '啟奏……內務府今日似乎也有點忙。'
-      );
+      content =
+        '啟奏……內務府今日似乎也有點忙。';
+      break;
 
     case 'network':
-      return (
-        '啟奏……奴才剛才好像被風吹斷線了。'
-      );
+      content =
+        '啟奏……奴才剛才好像被風吹斷線了。';
+      break;
 
     case 'api':
-      return (
-        '啟奏……內務府出了點小差錯。'
-      );
+      content =
+        '啟奏……內務府出了點小差錯。';
+      break;
 
     case 'unknown':
     default:
-      return (
-        '啟奏……奴才剛才突然失神了一下。'
-      );
+      content =
+        '啟奏……奴才剛才突然失神了一下。';
+      break;
   }
+
+
+  return buildStyleResponse(
+    content,
+    {
+      preserveContent: true,
+    },
+  );
 }
