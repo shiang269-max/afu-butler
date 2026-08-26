@@ -16,6 +16,10 @@ import {
 } from './function-help';
 
 import {
+  handleStyleSwitch,
+} from './style-switch';
+
+import {
   handleReminderMessage,
 } from './reminder-handler';
 
@@ -1569,6 +1573,88 @@ try {
   }
 
   return;
+}
+
+/* 
+ * =====================================================
+ * Style Switch
+ * =====================================================
+ *
+ * 角色風格查詢與切換。
+ *
+ * 例如：
+ *
+ * - 阿福，切換風格
+ * - 阿福，有哪些風格
+ * - 阿福，切換成大內總管
+ *
+ * Style Switch 不使用 AI。
+ *
+ * 只有明確呼叫總管時才處理，
+ * 避免一般聊天中的「換成」「改成」
+ * 被誤判為角色風格切換。
+ *
+ * 必須放在 Function Help / Vote / Reminder /
+ * Observer / AI Core 前面。
+ * =====================================================
+ */
+
+if (
+  hasTrigger
+) {
+
+  const styleSwitchResult =
+    handleStyleSwitch(
+      userMessage,
+    );
+
+
+  if (
+    styleSwitchResult.handled
+  ) {
+
+    const styleSwitchReply =
+      styleSwitchResult.replyText ||
+      '角色風格設定已處理。';
+
+
+    await lineClient.replyMessage(
+      {
+        replyToken:
+          event.replyToken,
+
+        messages: [
+          {
+            type:
+              'text',
+
+            text:
+              styleSwitchReply.slice(
+                0,
+                5000,
+              ),
+          },
+        ],
+      },
+    );
+
+
+    addToMemory(
+      conversationKey,
+      'user',
+      userMessage,
+    );
+
+
+    addToMemory(
+      conversationKey,
+      'assistant',
+      styleSwitchReply,
+    );
+
+
+    return;
+  }
 }
 
 /*
