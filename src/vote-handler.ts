@@ -10,6 +10,7 @@
   startVoting,
   castVote,
   finishVote,
+  cancelVote,
   resolveVoteTie,
 } from './vote';
 
@@ -595,6 +596,78 @@ function isConfirmCommand(
 }
 
 
+function isVoteEndCommand(
+  message: string,
+): boolean {
+  const text =
+    message
+      .replace(/\s+/g, '')
+      .toLowerCase();
+
+  return [
+    '結束投票',
+    '完成投票',
+    '結束這次投票',
+    '投票完成',
+    '取消投票',
+    '不要投了',
+    '先不要投了',
+    '結束',
+  ].includes(text);
+}
+
+
+function parseRemoveOptionCommand(
+  message: string,
+): string | null {
+  const text =
+    message
+      .trim()
+      .replace(/\s+/g, ' ');
+
+  const match =
+    text.match(
+      /^(?:剔除|不要|移除|刪除)\s*(.+)$/,
+    );
+
+  return match?.[1]
+    ? match[1].trim()
+    : null;
+}
+
+
+function currentOptionsPrompt(
+  vote: Vote,
+): string {
+  const options =
+    vote.options
+      .map(
+        (option, index) =>
+          `${index + 1}. ${option.text}`,
+      )
+      .join('\n');
+
+  return options || '目前沒有候選項目。';
+}
+
+
+function removeOptionPrompt(
+  vote: Vote,
+  removedText: string,
+): string {
+  return [
+    `已移除：「${removedText}」。`,
+    '',
+    '目前候選項目：',
+    currentOptionsPrompt(vote),
+    '',
+    vote.status === 'READY'
+      ? '候選項目已準備完成。可繼續調整，或確認後開始投票。'
+      : optionsPrompt(),
+  ].join('\n');
+}
+
+
 function isStartCommand(
   message: string,
 ): boolean {
@@ -695,7 +768,8 @@ function readyPrompt(
     options,
     '',
     `本次共有 ${vote.expectedVoterCount} 人參與。`,
-    '確認後即可開始投票。',
+    '可使用「剔除1」、「不要泡麵」、「移除 2」或「刪除義大利麵」調整候選項目。',
+    '確認後請輸入「開始投票」。',
   ].join('\n');
 }
 
@@ -1104,6 +1178,119 @@ export async function handleVoteMessage(
    */
   if (vote) {
 
+    /**
+     * Explicit end/cancel commands always win over every existing
+     * Vote state handler. ACTIVE settles current votes; all other
+     * active states cancel the whole session immediately.
+     */
+    if (
+      isVoteEndCommand(
+        text,
+      )
+    ) {
+      try {
+        if (
+          vote.status ===
+          'ACTIVE'
+        ) {
+          const result =
+            finishVote(
+              groupId,
+            );
+
+          return {
+            handled: true,
+            message:
+              finishPrompt(
+                result,
+              ),
+          };
+        }
+
+        cancelVote(
+          groupId,
+        );
+
+        pendingVoteStarts.delete(
+          groupId,
+        );
+
+        return {
+          handled: true,
+          message:
+            `投票「${vote.title}」已取消。`,
+        };
+      } catch (error) {
+        return {
+          handled: true,
+          message:
+            error instanceof Error
+              ? error.message
+              : '結束投票失敗。',
+        };
+      }
+    }
+
+    /**
+     * Candidate removal is valid only before ACTIVE. Parse it before
+     * ordinary candidate collection so commands such as「不要 1」
+     * cannot be added as new options.
+     */
+    if (
+      vote.status ===
+      'COLLECTING_OPTIONS'
+      ||
+      vote.status ===
+      'READY'
+    ) {
+      const removeInput =
+        parseRemoveOptionCommand(
+          text,
+        );
+
+      if (removeInput) {
+        try {
+          const removedOption =
+            vote.options.find(
+              (option, index) =>
+                option.text === removeInput
+                ||
+                String(index + 1) === removeInput,
+            );
+
+          if (!removedOption) {
+            return {
+              handled: true,
+              message: '找不到這個候選項目。',
+            };
+          }
+
+          const updated =
+            removeVoteOption(
+              groupId,
+              removeInput,
+            );
+
+          return {
+            handled: true,
+            message:
+              removeOptionPrompt(
+                updated,
+                removedOption.text,
+              ),
+          };
+        } catch (error) {
+          return {
+            handled: true,
+            message:
+              error instanceof Error
+                ? error.message
+                : '移除候選項目失敗。',
+          };
+        }
+      }
+    }
+
     if (
       hasVoteStartIntent(
         text,
@@ -1204,7 +1391,7 @@ export async function handleVoteMessage(
               : [
                   '已選擇由大家提供候選項目。',
                   '',
-                  optionsPrompt(),
+                  participantPrompt(),
                 ].join('\n'),
         };
       }
@@ -1301,9 +1488,13 @@ export async function handleVoteMessage(
                 groupId,
               )!;
 
-            return startVoteWhenReady(
-              groupId,
-            );
+            return {
+              handled: true,
+              message:
+                readyPrompt(
+                  readyVote,
+                ),
+            };
           }
         }
 
@@ -1423,9 +1614,13 @@ export async function handleVoteMessage(
           vote.options.length >= 2
         ) {
 
-          return startVoteWhenReady(
-            groupId,
-          );
+          return {
+            handled: true,
+            message:
+              readyPrompt(
+                vote,
+              ),
+          };
         }
 
         return {
@@ -1554,9 +1749,13 @@ export async function handleVoteMessage(
             null &&
           vote.options.length >= 2
         ) {
-          return startVoteWhenReady(
-            groupId,
-          );
+          return {
+            handled: true,
+            message:
+              readyPrompt(
+                vote,
+              ),
+          };
         }
       }
 
@@ -1677,41 +1876,6 @@ export async function handleVoteMessage(
       vote.status ===
       'ACTIVE'
     ) {
-
-      if (
-        /^(?:結束投票|完成投票|結束這次投票|投票完成)$/.test(
-          text
-            .replace(/\s+/g, ''),
-        )
-      ) {
-
-        try {
-
-          const result =
-            finishVote(
-              groupId,
-            );
-
-          return {
-            handled: true,
-            message:
-              finishPrompt(
-                result,
-              ),
-          };
-
-        } catch (error) {
-
-          return {
-            handled: true,
-            message:
-              error instanceof Error
-                ? error.message
-                : '結束投票失敗。',
-          };
-        }
-      }
-
 
       const voteInput =
         parseExplicitVoteInput(
