@@ -5,22 +5,6 @@
  *
  * 所有可切換的角色 Style 都在這裡統一註冊。
  *
- * 未來：
- *
- * 宮廷
- * 武俠
- * 幫派
- * 西方貴族
- * 軍事
- *
- * 都只需要在這裡新增自己的 Style 定義。
- *
- * 其他系統不應該自己寫死：
- *
- * - Style ID
- * - Style 名稱
- * - Style 專屬呼叫詞
- *
  * =========================================================
  */
 
@@ -31,14 +15,6 @@ export interface StyleDefinition {
    * =========================================================
    * Style 唯一 ID
    * =========================================================
-   *
-   * 供：
-   *
-   * - JSON State
-   * - 程式判斷
-   * - 未來切換
-   *
-   * 使用。
    */
 
   id: string;
@@ -74,16 +50,6 @@ export interface StyleDefinition {
    * src/call-names.ts
    *
    * 統一管理。
-   *
-   * 最終：
-   *
-   * 通用呼叫詞
-   * +
-   * 目前 Style 專屬呼叫詞
-   *
-   * =
-   *
-   * 目前完整可用呼叫詞。
    */
 
   callNames: readonly string[];
@@ -93,9 +59,6 @@ export interface StyleDefinition {
    * =========================================================
    * 是否允許使用
    * =========================================================
-   *
-   * 未來可以先建立 Style，
-   * 但尚未正式開放切換。
    */
 
   enabled: boolean;
@@ -144,6 +107,156 @@ export const STYLE_REGISTRY:
   },
 
 
+  /**
+   * =========================================================
+   * 西方貴族 Style
+   * =========================================================
+   */
+
+  aristocracy: {
+
+    id:
+      'aristocracy',
+
+    name:
+      '西方貴族',
+
+    description:
+      '以西方莊園與貴族世界觀作為語言與表演方式，由優雅、機智的管家協助家庭成員。',
+
+    callNames: [
+      '管家',
+      '老管家',
+      '管家先生',
+      '管家大人',
+    ],
+
+    enabled:
+      true,
+
+  },
+
+
+  /**
+   * =========================================================
+   * 海盜 Style
+   * =========================================================
+   */
+
+  pirate: {
+
+    id:
+      'pirate',
+
+    name:
+      '海盜',
+
+    description:
+      '以海盜船與航海冒險世界觀作為語言與表演方式，由可靠又有些痞氣的大副協助船員。',
+
+    callNames: [
+      '大副',
+      '船長',
+      '老水手',
+      '阿福大副',
+    ],
+
+    enabled:
+      true,
+
+  },
+
+
+  /**
+   * =========================================================
+   * 童話世界 Style
+   * =========================================================
+   */
+
+  fairy_tale: {
+
+    id:
+      'fairy_tale',
+
+    name:
+      '童話世界',
+
+    description:
+      '以童話王國與魔法世界觀作為語言與表演方式，帶有想像力、幽默與童話式的敘事感。',
+
+    callNames: [
+      '魔法管家',
+      '魔法師',
+      '精靈',
+      '小精靈',
+    ],
+
+    enabled:
+      true,
+
+  },
+
+
+  /**
+   * =========================================================
+   * 太空艦隊 Style
+   * =========================================================
+   */
+
+  space_fleet: {
+
+    id:
+      'space_fleet',
+
+    name:
+      '太空艦隊',
+
+    description:
+      '以未來太空艦隊與星際航行世界觀作為語言與表演方式，由艦隊 AI 與艦橋參謀協助全艦成員。',
+
+    callNames: [
+      '艦長',
+      '副官',
+      '艦橋',
+      '中央電腦',
+      '艦隊 AI',
+    ],
+
+    enabled:
+      true,
+
+  },
+
+
+  /**
+   * =========================================================
+   * 軍事指揮部 Style
+   * =========================================================
+   */
+
+  military_command: {
+
+    id:
+      'military_command',
+
+    name:
+      '軍事指揮部',
+
+    description:
+      '以軍事指揮中心作為世界觀，由冷靜、精準的參謀副官協助家庭處理各項任務。',
+
+    callNames: [
+      '副官',
+      '參謀',
+      '指揮官',
+      '作戰中心',
+    ],
+
+    enabled:
+      true,
+
+  },
+
 };
 
 
@@ -153,7 +266,8 @@ export const STYLE_REGISTRY:
  * =========================================================
  */
 
-export function getAllStyles(): StyleDefinition[] {
+export function getAllStyles():
+  StyleDefinition[] {
 
   return Object.values(
     STYLE_REGISTRY,
@@ -168,7 +282,8 @@ export function getAllStyles(): StyleDefinition[] {
  * =========================================================
  */
 
-export function getEnabledStyles(): StyleDefinition[] {
+export function getEnabledStyles():
+  StyleDefinition[] {
 
   return getAllStyles()
     .filter(
@@ -187,7 +302,10 @@ export function getEnabledStyles(): StyleDefinition[] {
 
 export function getStyleById(
   styleId: string,
-): StyleDefinition | undefined {
+):
+  StyleDefinition
+  |
+  undefined {
 
   return STYLE_REGISTRY[
     styleId
@@ -204,12 +322,14 @@ export function getStyleById(
 
 export function isEnabledStyle(
   styleId: string,
-): boolean {
+):
+  boolean {
 
   const style =
     getStyleById(
       styleId,
     );
+
 
   return Boolean(
     style?.enabled,

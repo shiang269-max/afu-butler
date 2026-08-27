@@ -3,27 +3,26 @@
  * 總管呼叫詞統一管理
  * =========================================================
  *
- * 所有需要判斷：
+ * 負責：
  *
- * - 有沒有呼叫總管
+ * - 取得目前 Style 可用呼叫詞
+ * - 判斷訊息是否包含呼叫詞
  * - 清除呼叫詞
  * - 查詢目前可用呼叫詞
+ * - 判斷是否為呼叫詞詢問
  *
- * 的功能，都必須使用這個模組。
+ * 呼叫詞組成：
  *
- * 不要在各功能檔案重新寫死：
+ * 通用呼叫詞
+ * +
+ * 目前啟用 Style 專屬呼叫詞
  *
- * - 大內總管
- * - 總管
- * - 內內
- * - 喳子
- * - 渣子
- * - 阿福
- *
- * 未來 Style 切換後，只需要由目前啟用的 Style
- * 提供自己的風格呼叫詞，再與通用呼叫詞合併。
  * =========================================================
  */
+
+import {
+  getActiveStyle,
+} from './style-state';
 
 
 /**
@@ -31,15 +30,16 @@
  * 所有 Style 永久通用呼叫詞
  * =========================================================
  *
- * 阿福是總管跨 Style 的固定通用名稱。
+ * 「阿福」是總管跨 Style 的固定通用名稱。
  *
  * 不論目前：
  *
- * - 大內總管
+ * - 宮廷
  * - 武俠
  * - 幫派
  * - 西方貴族
  * - 軍事
+ * - 童話世界
  *
  * 都可以使用「阿福」呼叫。
  * =========================================================
@@ -52,13 +52,18 @@ export const UNIVERSAL_CALL_NAMES = [
 
 /**
  * =========================================================
- * 目前宮廷 Style 呼叫詞
+ * 宮廷 Style 呼叫詞
  * =========================================================
  *
- * 未來正式 Style Registry 建立後，
- * 這些資料會移入各自的 Style Package。
+ * 保留這個 export 的原因：
  *
- * 現階段先集中管理，讓既有功能先拔除寫死呼叫詞。
+ * - 既有測試使用
+ * - 宮廷 Style 的專屬呼叫詞定義
+ * - 維持向後相容
+ *
+ * 實際執行時，
+ * getActiveCallNames()
+ * 會依目前啟用的 Style 動態取得呼叫詞。
  * =========================================================
  */
 
@@ -73,31 +78,85 @@ export const PALACE_CALL_NAMES = [
 
 /**
  * =========================================================
- * 目前可用呼叫詞
- * =========================================================
- *
- * 第一階段目前只有宮廷 Style，
- * 因此：
- *
- * 通用呼叫詞
- * +
- * 宮廷 Style 呼叫詞
- * =
- * 目前完整可用呼叫詞
- *
- * 未來會改成：
- *
- * 通用呼叫詞
- * +
- * 目前啟用 Style 的呼叫詞
+ * 取得目前啟用 Style 的專屬呼叫詞
  * =========================================================
  */
 
-export function getActiveCallNames(): string[] {
+export function getActiveStyleCallNames():
+  string[] {
+
+  const activeStyle =
+    getActiveStyle();
+
+
+  const callNames =
+    activeStyle.callNames;
+
+
+  if (
+    !Array.isArray(
+      callNames,
+    )
+  ) {
+
+    return [];
+
+  }
+
 
   return [
-    ...UNIVERSAL_CALL_NAMES,
-    ...PALACE_CALL_NAMES,
+    ...callNames,
+  ];
+
+}
+
+
+/**
+ * =========================================================
+ * 目前可用呼叫詞
+ * =========================================================
+ *
+ * 組成：
+ *
+ * 通用呼叫詞
+ * +
+ * 目前 Style 專屬呼叫詞
+ *
+ * 例如目前是：
+ *
+ * 宮廷 Style
+ *
+ * →
+ *
+ * 阿福
+ * +
+ * 大內總管
+ * 總管
+ * 內內
+ * 喳子
+ * 渣子
+ *
+ * =========================================================
+ */
+
+export function getActiveCallNames():
+  string[] {
+
+  const activeStyleCallNames =
+    getActiveStyleCallNames();
+
+
+  return [
+
+    ...new Set(
+
+      [
+        ...UNIVERSAL_CALL_NAMES,
+        ...activeStyleCallNames,
+      ],
+
+    ),
+
   ];
 
 }
@@ -116,14 +175,25 @@ export function hasCallName(
   const text =
     message.trim();
 
-  if (!text) {
+
+  if (
+    !text
+  ) {
+
     return false;
+
   }
 
-  return getActiveCallNames().some(
-    (callName) =>
-      text.includes(callName),
-  );
+
+  return getActiveCallNames()
+    .some(
+      (
+        callName,
+      ) =>
+        text.includes(
+          callName,
+        ),
+    );
 
 }
 
@@ -137,12 +207,10 @@ export function hasCallName(
  *
  * 「阿福 幫我開投票」
  *
- * →
+ * ↓
  *
  * 「幫我開投票」
  *
- *
- * 注意：
  *
  * 必須由長到短處理，
  * 避免：
@@ -164,24 +232,38 @@ export function cleanCallNames(
   let text =
     message;
 
+
   const callNames =
-    [...getActiveCallNames()]
+    [
+      ...getActiveCallNames(),
+    ]
       .sort(
-        (a, b) =>
-          b.length - a.length,
+        (
+          a,
+          b,
+        ) =>
+          b.length -
+          a.length,
       );
+
 
   for (
     const callName
-    of callNames
+    of
+    callNames
   ) {
 
     text =
       text
-        .split(callName)
-        .join('');
+        .split(
+          callName,
+        )
+        .join(
+          '',
+        );
 
   }
+
 
   return text
     .replace(
@@ -198,18 +280,20 @@ export function cleanCallNames(
  * 取得目前可用呼叫詞文字
  * =========================================================
  *
- * 供：
+ * 例如：
  *
- * 「阿福，可以怎麼叫你？」
+ * 阿福、大內總管、總管、內內、喳子、渣子
  *
- * 或未來 AI / 功能說明使用。
  * =========================================================
  */
 
-export function getActiveCallNamesText(): string {
+export function getActiveCallNamesText():
+  string {
 
   return getActiveCallNames()
-    .join('、');
+    .join(
+      '、',
+    );
 
 }
 
@@ -222,12 +306,15 @@ export function getActiveCallNamesText(): string {
  * 用於判斷使用者是否在詢問：
  *
  * - 可以怎麼叫你
+ * - 能怎麼叫你
+ * - 怎麼叫你
+ * - 怎麼稱呼你
  * - 你叫什麼
  * - 你的名字
+ * - 有哪些稱呼
  * - 有哪些呼叫詞
- * - 怎麼呼叫你
  *
- * 這裡只負責「可能是詢問」。
+ * 這裡只負責判斷意圖。
  *
  * 真正的回覆格式由上層決定。
  * =========================================================
@@ -239,41 +326,76 @@ export function isCallNameHelpIntent(
 
   const rawText =
     message
-      .replace(/\s+/g, '')
+      .replace(
+        /\s+/g,
+        '',
+      )
       .trim();
+
 
   const text =
-    cleanCallNames(message)
-      .replace(/\s+/g, '')
+    cleanCallNames(
+      message,
+    )
+      .replace(
+        /\s+/g,
+        '',
+      )
       .trim();
 
-  if (!rawText) {
+
+  if (
+    !rawText
+  ) {
+
     return false;
+
   }
+
 
   const patterns = [
 
     /可以怎麼叫你/,
 
+    /可以怎樣叫你/,
+
+    /能怎麼叫你/,
+
+    /能怎樣叫你/,
+
     /怎麼叫你/,
+
+    /怎樣叫你/,
 
     /怎麼稱呼你/,
 
+    /怎樣稱呼你/,
+
     /怎麼呼叫你/,
+
+    /怎樣呼叫你/,
 
     /可以怎麼稱呼你/,
 
+    /可以怎樣稱呼你/,
+
     /可以怎麼呼叫你/,
+
+    /可以怎樣呼叫你/,
 
     /你叫什麼/,
 
-    /你叫啥/,
-
     /你叫甚麼/,
+
+    /你叫啥/,
 
     /你的名字/,
 
     /你的名稱/,
+
+    /你叫什麼名字/,
+
+    /你叫甚麼名字/,
 
     /有哪些呼叫詞/,
 
@@ -285,14 +407,30 @@ export function isCallNameHelpIntent(
 
     /可以用什麼呼叫詞/,
 
+    /有哪些稱呼/,
+
+    /有什麼稱呼/,
+
+    /有那些稱呼/,
+
     /怎麼叫總管/,
+
+    /怎麼稱呼總管/,
 
   ];
 
-    return patterns.some(
-    (pattern) =>
-      pattern.test(text) ||
-      pattern.test(rawText),
+
+  return patterns.some(
+    (
+      pattern,
+    ) =>
+      pattern.test(
+        text,
+      )
+      ||
+      pattern.test(
+        rawText,
+      ),
   );
 
 }
@@ -303,22 +441,35 @@ export function isCallNameHelpIntent(
  * 建立目前呼叫詞說明
  * =========================================================
  *
- * 第一階段先提供統一格式。
+ * 回覆內容會依目前啟用的 Style
+ * 自動顯示：
  *
- * 未來 Style 系統建立後，
- * 可以依目前 Style 自動補上：
+ * 通用呼叫詞
+ * +
+ * 目前 Style 專屬呼叫詞
  *
- * - Style 名稱
- * - Style 專屬呼叫詞
- * - 通用呼叫詞
  * =========================================================
  */
 
-export function buildActiveCallNamesHelpMessage(): string {
+export function buildActiveCallNamesHelpMessage():
+  string {
+
+  const activeStyle =
+    getActiveStyle();
+
 
   return [
+
+    `目前使用的是「${activeStyle.name}」風格。`,
+
+    '',
+
     '目前可以這樣叫我：',
+
     getActiveCallNamesText(),
-  ].join('\n');
+
+  ].join(
+    '\n',
+  );
 
 }

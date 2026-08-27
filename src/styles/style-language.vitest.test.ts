@@ -120,7 +120,7 @@ describe(
             expect(
               language.prompt,
             ).toContain(
-              '【角色定位】',
+             '【角色身份】',
             );
 
             expect(

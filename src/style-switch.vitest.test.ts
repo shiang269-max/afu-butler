@@ -1,5 +1,4 @@
 import {
-  beforeEach,
   describe,
   expect,
   it,
@@ -10,24 +9,13 @@ import {
 } from './style-switch';
 
 import {
-  getActiveStyleId,
-  setActiveStyle,
+  getActiveStyle,
 } from './style-state';
 
 
 describe(
   'Style Switch',
   () => {
-
-    beforeEach(
-      () => {
-
-        setActiveStyle(
-          'palace',
-        );
-
-      },
-    );
 
 
     it(
@@ -36,7 +24,9 @@ describe(
 
         const result =
           handleStyleSwitch(
-            '今天天氣很好',
+            '今天晚餐吃什麼？',
+            'test-normal-chat',
+            false,
           );
 
 
@@ -64,6 +54,8 @@ describe(
         const result =
           handleStyleSwitch(
             '阿福，切換風格',
+            'test-style-list',
+            true,
           );
 
 
@@ -84,7 +76,7 @@ describe(
         expect(
           result.replyText,
         ).toContain(
-          '大內總管',
+          '目前可用的角色風格',
         );
 
       },
@@ -97,7 +89,9 @@ describe(
 
         const result =
           handleStyleSwitch(
-            '總管，有哪些風格',
+            '阿福，有哪些風格',
+            'test-style-list-2',
+            true,
           );
 
 
@@ -105,6 +99,13 @@ describe(
           result.handled,
         ).toBe(
           true,
+        );
+
+
+        expect(
+          result.changed,
+        ).toBe(
+          false,
         );
 
 
@@ -122,9 +123,15 @@ describe(
       '切換目前已使用的風格',
       () => {
 
+        const activeStyle =
+          getActiveStyle();
+
+
         const result =
           handleStyleSwitch(
-            '阿福，切換成大內總管',
+            `阿福，切換成${activeStyle.name}`,
+            'test-current-style',
+            true,
           );
 
 
@@ -158,7 +165,9 @@ describe(
 
         const result =
           handleStyleSwitch(
-            '阿福，切換成武俠',
+            '阿福，切換成不存在的風格',
+            'test-unknown-style',
+            true,
           );
 
 
@@ -180,13 +189,6 @@ describe(
           result.reason,
         ).toBe(
           'style-not-found',
-        );
-
-
-        expect(
-          getActiveStyleId(),
-        ).toBe(
-          'palace',
         );
 
       },

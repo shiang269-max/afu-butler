@@ -7,6 +7,12 @@ import { SYSTEM_INSTRUCTION } from './persona';
 import { FAMILY_MEMBERS } from './family';
 
 import {
+  hasCallName,
+  isCallNameHelpIntent,
+  buildActiveCallNamesHelpMessage,
+} from './call-names';
+
+import {
   handleVoteMessage,
 } from './vote-handler';
 import { resolveFamilyTarget } from './family-resolver';
@@ -886,22 +892,9 @@ app.post(
              * =====================================================
              */
 
-            const triggerWords = [
-  '大內總管',
-  '總管',
-  '內內',
-  '喳子',
-  '渣子',
-  '阿福',
-];
-
-
             const hasTrigger =
-              triggerWords.some(
-                (word) =>
-                  userMessage.includes(
-                    word,
-                  ),
+              hasCallName(
+                userMessage,
               );
 
 
@@ -1599,19 +1592,104 @@ try {
  * =====================================================
  */
 
+/*
+ * =====================================================
+ * Call Name Help
+ * =====================================================
+ *
+ * 查詢目前角色可使用的稱呼。
+ *
+ * 例如：
+ *
+ * - 阿福，能怎麼叫你？
+ * - 阿福，可以怎麼叫你？
+ * - 阿福，你叫什麼？
+ * - 阿福，有哪些稱呼？
+ *
+ * 不使用 AI，直接回覆目前所有有效呼叫詞。
+ * =====================================================
+ */
+
 if (
-  hasTrigger
+  hasTrigger &&
+  isCallNameHelpIntent(
+    userMessage,
+  )
 ) {
 
-  const styleSwitchResult =
-    handleStyleSwitch(
-      userMessage,
-    );
+  const callNameHelpReply =
+    buildActiveCallNamesHelpMessage();
+
+  await lineClient.replyMessage(
+    {
+      replyToken:
+        event.replyToken,
+
+      messages: [
+        {
+          type:
+            'text',
+
+          text:
+            callNameHelpReply.slice(
+              0,
+              5000,
+            ),
+        },
+      ],
+    },
+  );
+
+  addToMemory(
+    conversationKey,
+    'user',
+    userMessage,
+  );
+
+  addToMemory(
+    conversationKey,
+    'assistant',
+    callNameHelpReply,
+  );
+
+  return;
+}
 
 
-  if (
-    styleSwitchResult.handled
-  ) {
+/*
+ * =====================================================
+ * Style Switch
+ * =====================================================
+ *
+ * 角色風格查詢與切換。
+ *
+ * 例如：
+ *
+ * - 阿福，切換風格
+ * - 阿福，有哪些風格
+ * - 阿福，切換成大內總管
+ *
+ * Style Switch 不使用 AI。
+ *
+ * 只有明確呼叫總管時才處理，
+ * 避免一般聊天中的「換成」「改成」
+ * 被誤判為角色風格切換。
+ *
+ * 必須放在 Function Help / Vote / Reminder /
+ * Observer / AI Core 前面。
+ * =====================================================
+ */
+
+const styleSwitchResult =
+  handleStyleSwitch(
+    userMessage,
+    conversationKey,
+    hasTrigger,
+  );
+
+if (
+  styleSwitchResult.handled
+) {
 
     const styleSwitchReply =
       styleSwitchResult.replyText ||
@@ -1655,7 +1733,7 @@ if (
 
     return;
   }
-}
+
 
 /*
  * =====================================================
