@@ -7,6 +7,7 @@ import { SYSTEM_INSTRUCTION } from './persona';
 import { FAMILY_MEMBERS } from './family';
 
 import {
+  getActiveCallNames,
   hasCallName,
   isCallNameHelpIntent,
   buildActiveCallNamesHelpMessage,
@@ -96,6 +97,10 @@ import {
 import {
   handleLocationPlacesAction,
 } from './location/location-places-action-handler';
+
+import {
+  buildStyleResponse,
+} from './styles/style-response';
 
 
 /**
@@ -332,15 +337,16 @@ function hasFamilyTargetIntent(
 function hasReminderInvocation(
   message: string,
 ): boolean {
-  return [
-    '大內總管',
-    '總管',
-    '內內',
-    '喳子',
-    '渣子',
-    '阿福',
-  ].some(
-    (word) => message.includes(word),
+  const text =
+    message.trim();
+
+  if (!text) {
+    return false;
+  }
+
+  return getActiveCallNames().some(
+    (callName) =>
+      text.startsWith(callName),
   );
 }
 
@@ -760,7 +766,7 @@ app.post(
                       type: 'text',
 
                       text:
-                        '喳，奴才已收到您剛分享的位置。',
+                        buildStyleResponse('喳，奴才已收到您剛分享的位置。'),
                     },
                   ],
                 },
@@ -946,7 +952,7 @@ if (
       messages: [
         {
           type: 'text',
-          text: '喳，遵旨。奴才先安靜。',
+          text: buildStyleResponse('喳，遵旨。奴才先安靜。'),
         },
       ],
     },
@@ -961,7 +967,7 @@ if (
   addToMemory(
     conversationKey,
     'assistant',
-    '喳，遵旨。奴才先安靜。',
+    buildStyleResponse('喳，遵旨。奴才先安靜。'),
   );
 
   return;
@@ -984,7 +990,7 @@ if (
       messages: [
         {
           type: 'text',
-          text: '喳，奴才恢復值班。',
+          text: buildStyleResponse('喳，奴才恢復值班。'),
         },
       ],
     },
@@ -999,7 +1005,7 @@ if (
   addToMemory(
     conversationKey,
     'assistant',
-    '喳，奴才恢復值班。',
+    buildStyleResponse('喳，奴才恢復值班。'),
   );
 
   return;
@@ -1093,7 +1099,7 @@ if (
                 'text',
 
               text:
-                '奴才暫時查不到 LINE 額度，請稍後再問。',
+                buildStyleResponse('奴才暫時查不到 LINE 額度，請稍後再問。'),
             },
           ],
         },
@@ -1158,8 +1164,8 @@ try {
       locationRouteResult.replyText ||
       (
         locationRouteResult.success
-          ? '喳，奴才已取得回家的路程資訊。'
-          : '喳，奴才目前無法取得這道位置資訊。'
+          ? buildStyleResponse('喳，奴才已取得回家的路程資訊。')
+          : buildStyleResponse('喳，奴才目前無法取得這道位置資訊。')
       );
 
     await lineClient.replyMessage(
@@ -1219,7 +1225,7 @@ try {
             type: 'text',
 
             text:
-              '總管暫時無法處理這道位置資訊，請稍後再試。',
+              buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。'),
           },
         ],
       },
@@ -1293,7 +1299,7 @@ try {
     ) {
       locationReply =
         locationIntentResult.clarificationMessage ||
-        '總管目前還缺少必要的位置資訊，請先提供目前位置或設定固定位置。';
+        buildStyleResponse('總管目前還缺少必要的位置資訊，請先提供目前位置或設定固定位置。');
     }
 
     /*
@@ -1380,7 +1386,7 @@ try {
               'current-location-unknown'
           ) {
             locationReply =
-              '喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。';
+              buildStyleResponse('喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。');
           }
 
           else if (
@@ -1388,7 +1394,7 @@ try {
               'home-location-unknown'
           ) {
             locationReply =
-              '喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。';
+              buildStyleResponse('喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。');
           }
 
           else if (
@@ -1396,12 +1402,12 @@ try {
               'MISSING_API_KEY'
           ) {
             locationReply =
-              '喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。';
+              buildStyleResponse('喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。');
           }
 
           else {
             locationReply =
-              '喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。';
+              buildStyleResponse('喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。');
           }
         }
 
@@ -1413,7 +1419,7 @@ try {
             !places.length
           ) {
             locationReply =
-              '喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。';
+              buildStyleResponse('喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。');
           }
 
           else {
@@ -1466,7 +1472,7 @@ try {
                 : '目前位置附近';
 
             locationReply =
-              `喳，奴才已依照「${searchLabel}」的實際位置查到以下店家：\n\n` +
+              buildStyleResponse(`喳，奴才已依照「${searchLabel}」的實際位置查到以下店家：\n\n`) +
               placeLines.join('\n\n');
           }
         }
@@ -1478,7 +1484,7 @@ try {
         );
 
         locationReply =
-          '喳，奴才已接到您的附近搜尋需求，但目前無法取得店家資料，請稍後再試。';
+          buildStyleResponse('喳，奴才已接到您的附近搜尋需求，但目前無法取得店家資料，請稍後再試。');
       }
     }
 
@@ -1491,7 +1497,7 @@ try {
     else {
       locationReply =
         locationIntentResult.clarificationMessage ||
-        '喳，奴才已接住這道位置需求，但目前還缺少可以執行的功能。';
+        buildStyleResponse('喳，奴才已接住這道位置需求，但目前還缺少可以執行的功能。');
     }
 
     await lineClient.replyMessage(
@@ -1553,7 +1559,7 @@ try {
               'text',
 
             text:
-              '總管暫時無法處理這道位置資訊，請稍後再試。',
+              buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。'),
           },
         ],
       },
@@ -1999,8 +2005,8 @@ try {
         reminderResult.message ||
         (
           reminderResult.created
-            ? '已記下，奴才會依旨提醒。'
-            : '喳，奴才已處理這道 Reminder。'
+            ? buildStyleResponse('已記下，奴才會依旨提醒。')
+            : buildStyleResponse('喳，奴才已處理這道 Reminder。')
         );
 
       // LINE Mention 只在群組訊息中執行。
@@ -2732,9 +2738,9 @@ async function generateProactiveReply(
     type === 'good-night'
   ) {
 
-    return (
+    return buildStyleResponse(
       '諸位，夜深了，奴才先向各位道一聲晚安。' +
-      '若還有什麼吩咐，隨時喚奴才一聲便是。'
+      '若還有什麼吩咐，隨時喚奴才一聲便是。',
     );
   }
 
@@ -2790,7 +2796,7 @@ async function generateProactiveReply(
 
   return (
     response.text?.trim() ||
-    '諸位都如此安靜，奴才倒有些不習慣了。'
+    buildStyleResponse('諸位都如此安靜，奴才倒有些不習慣了。')
   );
 }
 

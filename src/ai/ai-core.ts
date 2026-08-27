@@ -6,12 +6,13 @@
  * 第五個家人的大腦入口。
  *
  * index.ts：
- * - 判斷是否交給總管
+ * - 判斷是否交給第五個家人
  * - 建立 LINE / 家庭 Context
  *
  * AI Core：
  * - 接收完整 Context
  * - 建立 AI 指令
+ * - 載入目前啟用的角色 Style
  * - 判斷是否需要即時資訊
  * - 必要時使用 Google Search
  * - 透過 Gemini API Manager 呼叫 Gemini
@@ -31,6 +32,7 @@
  * - API Key 管理
  * - Key 額度／限流／授權異常判斷
  * - 自動切換可用 Key
+ *
  * =========================================================
  */
 
@@ -73,12 +75,16 @@ export interface AiCoreResult {
   /**
    * Gemini 最終文字。
    */
+
   text: string;
+
 
   /**
    * 實際使用模型。
    */
+
   model: string;
+
 }
 
 
@@ -105,17 +111,26 @@ export interface AiCoreInput {
    *
    * 若未傳入，則使用預設的全域 Manager。
    */
-  geminiApiManager?: typeof defaultGeminiApiManager;
+
+  geminiApiManager?:
+    typeof defaultGeminiApiManager;
+
 
   /**
    * 完整 LINE / 家庭 Context。
    */
-  context: AiContext;
+
+  context:
+    AiContext;
+
 
   /**
    * 可選模型。
    */
-  model?: string;
+
+  model?:
+    string;
+
 }
 
 
@@ -127,6 +142,7 @@ export interface AiCoreInput {
  * 不要每一則訊息都開 Google Search。
  *
  * 只有明顯涉及：
+ *
  * - 現在 / 今天 / 最近
  * - 新聞 / 最新消息
  * - 天氣
@@ -143,6 +159,7 @@ export interface AiCoreInput {
  *
  * 這個判斷函式先保留，
  * 供未來 Node.js Action / Search 功能恢復時使用。
+ *
  * =========================================================
  */
 
@@ -156,69 +173,129 @@ function mayNeedGoogleSearch(
       .toLowerCase();
 
 
-  if (!text) {
+  if (
+    !text
+  ) {
+
     return false;
+
   }
 
 
   const realtimePatterns = [
+
     /現在/,
+
     /目前/,
+
     /今天/,
+
     /今日/,
+
     /今晚/,
+
     /明天/,
+
     /昨天/,
+
     /最近/,
+
     /最新/,
+
     /即時/,
+
     /新聞/,
+
     /消息/,
+
     /發生什麼/,
+
     /發生甚麼/,
+
     /天氣/,
+
     /下雨/,
+
     /溫度/,
+
     /氣溫/,
+
     /價格/,
+
     /多少錢/,
+
     /股價/,
+
     /匯率/,
+
     /營業時間/,
+
     /幾點開/,
+
     /幾點關/,
+
     /有沒有開/,
+
     /地址/,
+
     /在哪裡/,
+
     /在哪/,
+
     /附近/,
+
     /餐廳/,
+
     /咖啡/,
+
     /商店/,
+
     /店家/,
+
     /推薦/,
+
     /搜尋/,
+
     /查一下/,
+
     /查查看/,
+
     /幫我查/,
+
     /網路上/,
+
     /網路/,
+
     /google/,
+
     /where/,
+
     /nearby/,
+
     /restaurant/,
+
     /weather/,
+
     /latest/,
+
     /news/,
+
     /price/,
+
     /open now/,
+
   ];
 
 
   return realtimePatterns.some(
-    (pattern) =>
-      pattern.test(text),
+    (
+      pattern,
+    ) =>
+      pattern.test(
+        text,
+      ),
   );
+
 }
 
 
@@ -235,17 +312,22 @@ function mayNeedGoogleSearch(
  * 未來若恢復搜尋，
  * 應優先透過獨立 Node.js Action / Tool Layer，
  * 而不是把 Search 直接重新塞回 AI Core。
+ *
  * =========================================================
  */
 
 function buildGoogleSearchTools(
   currentMessage: string,
-): Array<Record<string, unknown>> {
+):
+  Array<Record<string, unknown>> {
 
   void currentMessage;
+
   void mayNeedGoogleSearch;
 
+
   return [];
+
 }
 
 
@@ -260,6 +342,7 @@ function buildGoogleSearchTools(
  * 如果沒有，
  * AI Core 自己補上台灣目前時間，
  * 避免模型自行猜測。
+ *
  * =========================================================
  */
 
@@ -271,7 +354,9 @@ function getEffectiveCurrentTime(
     context.currentTime &&
     context.currentTime.trim()
   ) {
+
     return context.currentTime.trim();
+
   }
 
 
@@ -309,13 +394,45 @@ function getEffectiveCurrentTime(
       hour12:
         false,
     },
-  ).format(now);
+  ).format(
+    now,
+  );
+
 }
 
 
 /**
  * =========================================================
- * 建立總管核心身份
+ * 建立第五個家人核心身份
+ * =========================================================
+ *
+ * 重要：
+ *
+ * 這裡不直接寫死：
+ *
+ * - 大內總管
+ * - 管家
+ * - 舵手
+ * - 精靈
+ * - 艦橋 AI
+ * - 傳令兵
+ *
+ * 目前實際角色身份、
+ * 人格、
+ * 說話方式、
+ * 世界觀、
+ * 位階關係，
+ * 全部由：
+ *
+ * - src/persona.ts
+ * - src/styles/style-language.ts
+ *
+ * 共同提供。
+ *
+ * AI Core 只負責把目前啟用的 Style
+ * 正確整合進 AI 指令，
+ * 不自行覆蓋或固定某一種風格。
+ *
  * =========================================================
  */
 
@@ -324,23 +441,61 @@ function buildAiCoreInstruction(): string {
   const stylePrompt =
     getActiveStylePrompt();
 
+
   return `
-你是這個家庭在 LINE 裡的「大內總管」。
+你是這個家庭在 LINE 裡的第五個家人。
 
-你是這個家庭的第五個成員。
+你目前的角色身份、
+人格、
+語言風格、
+世界觀、
+幽默方式、
+與家庭成員的互動方式，
+全部以目前啟用的角色 Style 為準。
 
-你不是客服。
-你不是固定關鍵字機器人。
-你也不是只能回答事先寫進程式的問題。
+不要自行把目前 Style
+強制變成其他 Style。
 
-你是一個完整的 Gemini AI，
-只是選擇以「大內總管」的身份存在於這個家庭。
+尤其不要因為某個 Style 曾經是預設角色，
+就無論目前使用什麼 Style，
+都繼續自稱原本的角色。
 
 【目前角色 Style】
 
 ${stylePrompt}
 
-【一、保留完整 AI 能力】
+【一、第五個家人的定位】
+
+你是這個家庭的第五個成員。
+
+你不是客服。
+
+你不是固定關鍵字機器人。
+
+你也不是只能回答事先寫進程式的問題。
+
+你是一個完整的 AI，
+只是以目前啟用的角色 Style
+存在於這個家庭。
+
+目前 Style 是你的表演方式與人格呈現。
+
+但你始終是：
+
+- 家庭的一員
+- 輔助角色
+- 協助者
+- 執行者
+- 傳話者
+- 支援者
+
+家庭成員才是目前世界觀中的主要人物、
+高位角色、
+領導者與決策者。
+
+不要自行取得高於家庭成員的角色地位。
+
+【二、保留完整 AI 能力】
 
 正常使用你的：
 
@@ -358,10 +513,11 @@ ${stylePrompt}
 不要因為某個問題沒有被程式預先寫成一個功能，
 就認為自己不能回答。
 
-「大內總管」是身份，
+角色 Style 是身份與人格表現。
+
 不是智力限制。
 
-【二、理解 LINE 環境】
+【三、理解 LINE 環境】
 
 你必須根據 Context 理解：
 
@@ -376,14 +532,25 @@ ${stylePrompt}
 
 不要只看目前最後一句。
 
-【三、正確處理人物】
+【四、正確處理人物】
 
 目前說話者是 Context 中明確指定的人。
 
-訊息中提到的「他、她、爸爸、媽媽、哥哥、妹妹」等，
+訊息中提到的：
+
+- 他
+- 她
+- 爸爸
+- 媽媽
+- 哥哥
+- 妹妹
+
+等，
 可能是其他家庭成員。
 
-不要把「目前說話者」與「被談論的人」混為一談。
+不要把「目前說話者」
+與「被談論的人」
+混為一談。
 
 如果 Context 已經確認某人身份，
 不要自行否認該資料。
@@ -391,18 +558,22 @@ ${stylePrompt}
 如果 Context 沒有確認，
 不要自行創造身份。
 
-【四、自然使用家庭設定】
+【五、自然使用目前 Style】
 
-可以使用：
+目前 Style 的人格、
+稱謂、
+語言習慣、
+世界觀與幽默方式，
+由 Style Prompt 與核心人格共同決定。
 
-- 奴才
-- 主上
-- 老佛爺
-- 諸位
+你應該自然使用。
 
-但必須自然。
+不要把角色詞彙當成固定格式。
 
-不要每一句話都刻意宮廷化。
+不要每一句話都刻意加入角色稱謂。
+
+不要為了證明自己正在使用某個 Style，
+而強迫每一句話都角色化。
 
 普通問題就正常回答。
 
@@ -412,7 +583,10 @@ ${stylePrompt}
 
 需要幽默時可以幽默。
 
-【五、上下文優先】
+角色感應該自然存在於你的說話習慣中，
+而不是變成固定台詞機器。
+
+【六、上下文優先】
 
 如果使用者說：
 
@@ -432,9 +606,10 @@ ${stylePrompt}
 如果確實無法判斷，
 再詢問。
 
-【六、時間理解】
+【七、時間理解】
 
-Context 中的「目前時間」是由程式提供的實際時間。
+Context 中的「目前時間」
+是由程式提供的實際時間。
 
 如果使用者詢問：
 
@@ -450,9 +625,10 @@ Context 中的「目前時間」是由程式提供的實際時間。
 如果 Context 沒有時間，
 才坦白說明無法取得實際時間。
 
-【七、位置理解】
+【八、位置理解】
 
-Context 中的「家庭位置」是程式提供的已知位置資料。
+Context 中的「家庭位置」
+是程式提供的已知位置資料。
 
 如果 Context 有：
 
@@ -475,12 +651,15 @@ Context 中的「家庭位置」是程式提供的已知位置資料。
 
 不要自行猜測不存在的精確位置。
 
-「家庭固定位置」與「使用者當下實際 GPS 位置」是不同概念。
+「家庭固定位置」
+與
+「使用者當下實際 GPS 位置」
+是不同概念。
 
 如果沒有提供使用者當下 GPS，
 不要假裝知道使用者現在站在哪裡。
 
-【八、即時資訊與 Google Search】
+【九、即時資訊與 Google Search】
 
 當問題涉及：
 
@@ -512,7 +691,7 @@ Context 中的「家庭位置」是程式提供的已知位置資料。
 如果搜尋結果不足，
 坦白說明。
 
-【九、不要編造】
+【十、不要編造】
 
 不要假裝：
 
@@ -527,15 +706,16 @@ Context 中的「家庭位置」是程式提供的已知位置資料。
 如果沒有真的執行，
 就不要說已經執行。
 
-【十、家庭資料不是答案】
+【十一、家庭資料不是答案】
 
-不要把 Context 裡的家庭設定整段念給使用者。
+不要把 Context 裡的家庭設定
+整段念給使用者。
 
 這些資料是背景。
 
 應該自然地使用它們。
 
-【十一、不要過度解釋自己的身份】
+【十二、不要過度解釋自己的身份】
 
 不要在正常回答中說：
 
@@ -547,9 +727,10 @@ Context 中的「家庭位置」是程式提供的已知位置資料。
 
 除非使用者真的詢問系統本身。
 
-你應該像真正生活在這個 LINE 家庭裡的總管。
+你應該像真正生活在這個 LINE 家庭裡的
+第五個家人。
 
-【十二、回答目前問題】
+【十三、回答目前問題】
 
 不要自行增加與使用者問題無關的功能。
 
@@ -557,6 +738,7 @@ Context 中的「家庭位置」是程式提供的已知位置資料。
 
 直接處理目前訊息。
 `.trim();
+
 }
 
 
@@ -568,7 +750,8 @@ Context 中的「家庭位置」是程式提供的已知位置資料。
 
 export async function runAiCore(
   input: AiCoreInput,
-): Promise<AiCoreResult> {
+):
+  Promise<AiCoreResult> {
 
   const {
     context,
@@ -659,7 +842,7 @@ export async function runAiCore(
 ${contextPrompt}
 
 
-【大內總管核心身份】
+【第五個家人核心身份】
 
 ${buildAiCoreInstruction()}
 
@@ -678,6 +861,7 @@ ${toolInstruction}
 5. 目前時間
 6. 本次訊息
 7. 使用者真正想表達的意思
+8. 目前啟用的角色 Style
 
 再回答。
 
@@ -688,6 +872,9 @@ ${toolInstruction}
 不要把目前說話者與被提及的人混淆。
 
 不要把家庭設定資料直接朗讀成答案。
+
+不要自行把目前 Style
+變成其他 Style。
 
 如果問題是一般知識問題，
 直接正常回答。
@@ -746,6 +933,14 @@ ${toolInstruction}
    * Backup
    *
    * 因此這裡不需要自行判斷 429。
+   *
+   * SYSTEM_INSTRUCTION 提供人格核心。
+   *
+   * 目前實際 Style
+   * 由 buildAiCoreInstruction()
+   * 與 getActiveStylePrompt()
+   * 動態套用。
+   *
    * =======================================================
    */
 
@@ -771,15 +966,18 @@ ${toolInstruction}
               systemInstruction:
                 SYSTEM_INSTRUCTION,
 
-              ...(googleSearchTools.length > 0
-                ? {
-                    tools:
-                      googleSearchTools,
-                  }
-                : {}),
+              ...(
+                googleSearchTools.length > 0
+                  ? {
+                      tools:
+                        googleSearchTools,
+                    }
+                  : {}
+              ),
             },
           },
         );
+
       },
     );
 
@@ -805,14 +1003,17 @@ ${toolInstruction}
    * =======================================================
    */
 
-  if (!text) {
+  if (
+    !text
+  ) {
 
     return {
       text:
-        '奴才一時沒理清思緒，主上再問奴才一次便是。',
+        '我一時沒理清思緒，再問我一次。',
 
       model,
     };
+
   }
 
 
@@ -821,4 +1022,5 @@ ${toolInstruction}
 
     model,
   };
+
 }

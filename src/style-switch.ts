@@ -776,6 +776,36 @@ function isCancelSelection(
 
 /**
  * =========================================================
+ * Build Active Style Call Names Reply
+ * =========================================================
+ *
+ * 這裡只負責提供目前可用呼叫詞。
+ *
+ * 不在此處寫入任何特定人格口吻，
+ * 避免切換功能本身再次綁定宮廷、
+ * 海盜、軍事或其他單一風格。
+ *
+ * =========================================================
+ */
+
+function buildActiveStyleCallNamesReply():
+  string {
+
+  return [
+
+    '目前可以這樣稱呼我：',
+
+    getActiveCallNamesText(),
+
+  ].join(
+    '\n',
+  );
+
+}
+
+
+/**
+ * =========================================================
  * Switch To Style
  * =========================================================
  */
@@ -834,7 +864,7 @@ function switchToStyle(
         false,
 
       replyText:
-        '總管暫時無法切換角色風格。',
+        '目前暫時無法切換角色風格。',
 
       reason:
         'style-switch-failed',
@@ -857,10 +887,13 @@ function switchToStyle(
 
     replyText:
       [
+
         `角色風格已切換為「${requestedStyle.name}」。`,
+
         '',
-        '目前可以這樣叫我：',
-        getActiveCallNamesText(),
+
+        buildActiveStyleCallNamesReply(),
+
       ].join(
         '\n',
       ),
@@ -1025,6 +1058,9 @@ export function handleStyleSwitch(
   now: number = Date.now(),
 ): StyleSwitchResult {
 
+  void now;
+
+
   const originalText =
     message.trim();
 
@@ -1080,7 +1116,7 @@ export function handleStyleSwitch(
   /*
    * ---------------------------------------------------------
    * 沒有 Pending State 時，
-   * 必須明確呼叫總管。
+   * 必須明確呼叫角色。
    * ---------------------------------------------------------
    */
 
@@ -1186,7 +1222,7 @@ export function handleStyleSwitch(
           false,
 
         replyText:
-          '總管目前找不到您指定的角色風格。請使用「阿福，切換風格」查看可用選項。',
+          '目前找不到指定的角色風格。請使用「阿福，切換風格」查看可用選項。',
 
         reason:
           'style-not-found',

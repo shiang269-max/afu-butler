@@ -42,6 +42,11 @@ import {
   resolveLocationReference,
 } from './location-resolver';
 
+import {
+  cleanCallNames,
+  hasCallName,
+} from '../call-names';
+
 
 /**
  * =========================================================
@@ -116,47 +121,172 @@ function normalizeText(
 
 /**
  * =========================================================
+ * Location Session
+ * =========================================================
+ *
+ * 「阿福 位置」會建立一次性的 Location Session。
+ *
+ * Session 規則：
+ *
+ * 1. 下一則文字訊息可以不帶呼叫詞。
+ *
+ * 2. 下一則文字訊息一進來就立即消耗 Session。
+ *    不論該訊息是否符合位置需求，都不再保留狀態。
+ *
+ * 3. 1 分鐘內沒有下一則文字訊息，
+ *    Session 自動結束。
+ *
+ * 這樣可以避免舊 Location Session 長時間攔截：
+ *
+ * - 附近有什麼
+ * - 離我最近的 XX 在哪
+ * - 一般聊天
+ *
+ * =========================================================
+ */
+
+const LOCATION_SESSION_TIMEOUT_MS =
+  60 * 1000;
+
+
+interface LocationSession {
+  createdAt: number;
+}
+
+
+const locationSessions =
+  new Map<
+    string,
+    LocationSession
+  >();
+
+
+function createLocationSession(
+  userId: string,
+): void {
+
+  const key =
+    userId.trim();
+
+  if (!key) {
+    return;
+  }
+
+  const session: LocationSession = {
+    createdAt:
+      Date.now(),
+  };
+
+  locationSessions.set(
+    key,
+    session,
+  );
+
+  setTimeout(
+    () => {
+
+      /*
+       * 只有目前仍是同一個 Session
+       * 才允許 Timeout 清除。
+       *
+       * 避免舊 Timer 誤刪除
+       * 後來重新建立的新 Session。
+       */
+      if (
+        locationSessions.get(
+          key,
+        ) === session
+      ) {
+
+        locationSessions.delete(
+          key,
+        );
+      }
+    },
+    LOCATION_SESSION_TIMEOUT_MS,
+  );
+}
+
+
+function consumeLocationSession(
+  userId: string,
+): boolean {
+
+  const key =
+    userId.trim();
+
+  if (!key) {
+    return false;
+  }
+
+  const session =
+    locationSessions.get(
+      key,
+    );
+
+  if (!session) {
+    return false;
+  }
+
+  /*
+   * 下一則文字訊息一進來，
+   * 就先結束上一輪 Location Session。
+   *
+   * 因此這一輪無論是否為位置需求，
+   * 都不會讓 Session 繼續殘留。
+   */
+  locationSessions.delete(
+    key,
+  );
+
+  return true;
+}
+
+
+function isLocationSessionInvocation(
+  text: string,
+): boolean {
+
+  return (
+    text === '位置' ||
+    text === '位置功能'
+  );
+}
+
+
+/**
+ * =========================================================
  * Invocation Gate
  * =========================================================
  *
  * 位置型功能屬於「指令功能」，
- * 必須先呼叫總管才允許進入 Location Intent。
+ * 必須先呼叫目前有效的總管呼叫詞才允許進入 Location Intent。
  *
- * 支援呼叫詞：
+ * 呼叫詞統一由：
+ *
+ * - hasCallName()
+ * - cleanCallNames()
+ *
+ * 動態管理。
+ *
+ * 支援：
+ *
+ * - 阿福
+ * - 目前 Active Style 專屬呼叫詞
+ *
+ * 沒有呼叫詞時，
+ * 即使文字本身包含位置關鍵字，
+ * 也一律視為正常家庭對話。
+ *
+ * 不再在本模組硬編碼：
  *
  * - 總管
  * - 大內總管
  * - 內內
  * - 喳子
  * - 渣子
- *
- * 沒有呼叫詞時，
- * 即使文字本身包含位置關鍵字，
- * 也一律視為正常家庭對話。
  * =========================================================
  */
-
-function hasLocationInvocation(
-  text: string,
-): boolean {
-
-  const invocationWords = [
-    '大內總管',
-    '總管',
-    '內內',
-    '喳子',
-    '渣子',
-  ];
-
-
-  return invocationWords.some(
-    (word) =>
-      text.includes(
-        word,
-      ),
-  );
-}
-
 
 /**
  * =========================================================
@@ -395,7 +525,7 @@ function isHomeRouteRequest(
 function buildCurrentLocationClarification(): string {
 
   return (
-    '總管目前不知道您現在的位置，' +
+    '我目前不知道您現在的位置，' +
     '請直接傳送 LINE 定位，或告訴我您現在在哪裡。'
   );
 }
@@ -404,7 +534,7 @@ function buildCurrentLocationClarification(): string {
 function buildHomeLocationClarification(): string {
 
   return (
-    '總管目前還不知道固定的家位置，' +
+    '我目前還不知道固定的家位置，' +
     '請先設定「家」的位置。'
   );
 }
@@ -610,14 +740,14 @@ export function handleLocationIntent(
   userId: string,
 ): LocationIntentResult {
 
-  const text =
+  const rawText =
     normalizeText(
       message,
     );
 
 
   if (
-    !text
+    !rawText
   ) {
 
     return {
@@ -638,18 +768,36 @@ export function handleLocationIntent(
 
   /*
    * ---------------------------------------------------------
-   * Location 指令必須先呼叫總管
+   * Location Session
+   * ---------------------------------------------------------
    *
-   * 沒有呼叫詞時，
-   * 即使文字本身符合位置需求，
-   * 也不進入 Location Intent。
+   * 如果上一輪已明確喚起位置功能，
+   * 下一則文字訊息可以直接作為一次性位置需求。
+   *
+   * Session 在下一則訊息進來時立即結束，
+   * 不論該訊息最後是否符合位置需求。
    * ---------------------------------------------------------
    */
 
+  const consumedLocationSession =
+    consumeLocationSession(
+      userId,
+    );
+
+
+  const hasInvocation =
+    hasCallName(
+      rawText,
+    );
+
+
+  /*
+   * 沒有有效呼叫詞，也沒有 Location Session，
+   * 就完全不進入位置功能。
+   */
   if (
-    !hasLocationInvocation(
-      text,
-    )
+    !consumedLocationSession &&
+    !hasInvocation
   ) {
 
     return {
@@ -664,6 +812,59 @@ export function handleLocationIntent(
 
       clarificationRequired:
         false,
+    };
+  }
+
+
+  const text =
+    hasInvocation
+      ? normalizeText(
+          cleanCallNames(
+            rawText,
+          ),
+        )
+      : rawText;
+
+
+  /*
+   * ---------------------------------------------------------
+   * 明確喚起「位置」
+   *
+   * 例如：
+   *
+   * - 阿福 位置
+   * - 目前風格呼叫詞 位置
+   *
+   * 建立一次性 Session，等待下一則文字訊息。
+   * ---------------------------------------------------------
+   */
+
+  if (
+    hasInvocation &&
+    isLocationSessionInvocation(
+      text,
+    )
+  ) {
+
+    createLocationSession(
+      userId,
+    );
+
+    return {
+      handled:
+        true,
+
+      intent:
+        'UNKNOWN',
+
+      resolved:
+        false,
+
+      clarificationRequired:
+        false,
+
+      clarificationMessage:
+        '位置功能已開啟，請直接告訴我想查什麼。',
     };
   }
 

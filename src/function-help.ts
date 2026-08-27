@@ -1,4 +1,9 @@
 import {
+  cleanCallNames,
+  buildActiveCallNamesHelpMessage,
+} from './call-names';
+
+import {
   getActiveFunctionHelpResponse,
 } from './styles/style-response';
 
@@ -57,13 +62,54 @@ const FUNCTIONS: FunctionDefinition[] = [
       '位置功能',
     ],
   },
+  {
+    id: 'style_switch',
+    name: '切換',
+    keywords: [
+      '切換',
+      '風格',
+      '切換風格',
+      '風格切換',
+      '切換角色',
+      '角色切換',
+    ],
+  },
+  {
+    id: 'call_names',
+    name: '呼叫詞',
+    keywords: [
+      '呼叫詞',
+      '稱呼',
+      '別稱',
+      '名字',
+    ],
+  },
 ];
 
 
 const LIST_INTENT_PATTERNS = [
   /^(?:你)?(?:有什麼|有哪些|目前有哪些)(?:功能|功能可以用|可以使用)?$/,
   /^(?:你)?(?:能做什麼|可以做什麼|會做什麼|會什麼|能幹嘛|可以幹嘛|會幹嘛)$/,
-  /^(?:功能|功能列表|功能清單|查看功能|查看有哪些功能)$/,
+  /^(?:功能|功能列表|功能清單|查看功能|查看有哪些功能|看功能)$/,
+];
+
+
+const CALL_NAMES_INTENT_PATTERNS = [
+  /(?:可以|能|該)?怎麼叫你/,
+  /怎麼稱呼你/,
+  /怎麼稱呼/,
+  /有哪些稱呼/,
+  /有什麼稱呼/,
+  /有哪些別稱/,
+  /有什麼別稱/,
+  /可以怎麼稱呼/,
+  /可以怎麼叫/,
+  /能怎麼叫你/,
+  /該怎麼叫你/,
+  /怎麼叫/,
+  /你叫什麼/,
+  /你叫什麼名字/,
+  /叫你什麼/,
 ];
 
 
@@ -117,12 +163,29 @@ function removeKnownTriggerPrefix(
   message: string,
 ): string {
 
-  return message
-    .replace(
-      /^(?:大內總管|總管|內內|喳子|渣子|阿福)[\s，,、。！？!?.:：;；]*/i,
-      '',
-    )
-    .trim();
+  return cleanCallNames(
+    message,
+  );
+
+}
+
+
+function isCallNamesIntent(
+  message: string,
+): boolean {
+
+  const normalized =
+    normalizeText(
+      message,
+    );
+
+
+  return CALL_NAMES_INTENT_PATTERNS.some(
+    (pattern) =>
+      pattern.test(
+        normalized,
+      ),
+  );
 
 }
 
@@ -130,6 +193,42 @@ function removeKnownTriggerPrefix(
 function findFunction(
   message: string,
 ): FunctionDefinition | null {
+
+  /*
+   * =====================================================
+   * 呼叫詞自然語句優先辨識
+   * =====================================================
+   *
+   * 例如：
+   *
+   * 阿福可以怎麼叫你
+   * 精靈可以怎麼叫你
+   * 你有哪些稱呼
+   *
+   * 這些句子不一定包含：
+   *
+   * 呼叫詞
+   * 稱呼
+   * 別稱
+   * 名字
+   *
+   * 因此不能只依靠關鍵字。
+   * =====================================================
+   */
+
+  if (
+    isCallNamesIntent(
+      message,
+    )
+  ) {
+
+    return FUNCTIONS.find(
+      (item) =>
+        item.id === 'call_names',
+    ) || null;
+
+  }
+
 
   for (
     const item
@@ -165,38 +264,41 @@ function findFunctionBySelection(
       message,
     );
 
+
+  const numericIndex =
+    Number(
+      normalized,
+    );
+
+
   if (
-    normalized === '1'
+    Number.isInteger(
+      numericIndex,
+    ) &&
+    numericIndex >= 1 &&
+    numericIndex <= FUNCTIONS.length
+  ) {
+
+    return FUNCTIONS[
+      numericIndex - 1
+    ] || null;
+
+  }
+
+
+  if (
+    isCallNamesIntent(
+      normalized,
+    )
   ) {
 
     return FUNCTIONS.find(
       (item) =>
-        item.id === 'vote',
+        item.id === 'call_names',
     ) || null;
 
   }
 
-  if (
-    normalized === '2'
-  ) {
-
-    return FUNCTIONS.find(
-      (item) =>
-        item.id === 'reminder',
-    ) || null;
-
-  }
-
-  if (
-    normalized === '3'
-  ) {
-
-    return FUNCTIONS.find(
-      (item) =>
-        item.id === 'location',
-    ) || null;
-
-  }
 
   for (
     const item
@@ -229,6 +331,7 @@ function hasListIntent(
     normalizeText(
       message,
     );
+
 
   return LIST_INTENT_PATTERNS.some(
     (pattern) =>
@@ -276,12 +379,53 @@ function createSelectionSession(
     return;
   }
 
-  functionHelpSelectionSessions.set(
-    contextId,
-    {
+
+  const session:
+    FunctionHelpSelectionSession = {
       createdAt:
         Date.now(),
+    };
+
+
+  functionHelpSelectionSessions.set(
+    contextId,
+    session,
+  );
+
+
+  /*
+   * =====================================================
+   * 1 分鐘後主動清除
+   * =====================================================
+   *
+   * 不需要等待下一則訊息才清除。
+   *
+   * 同一 Context 如果重新開啟新的功能列表，
+   * 舊 Timer 不會影響新的 Session。
+   * =====================================================
+   */
+
+  setTimeout(
+    () => {
+
+      const currentSession =
+        functionHelpSelectionSessions.get(
+          contextId,
+        );
+
+
+      if (
+        currentSession === session
+      ) {
+
+        functionHelpSelectionSessions.delete(
+          contextId,
+        );
+
+      }
+
     },
+    FUNCTION_HELP_SELECTION_TIMEOUT_MS,
   );
 
 }
@@ -295,6 +439,7 @@ function clearSelectionSession(
     return;
   }
 
+
   functionHelpSelectionSessions.delete(
     contextId,
   );
@@ -302,29 +447,33 @@ function clearSelectionSession(
 }
 
 
-function getActiveSelectionSession(
+export function hasActiveFunctionHelpSession(
   contextId: string,
-): FunctionHelpSelectionSession | null {
+): boolean {
 
   if (!contextId) {
-    return null;
+    return false;
   }
+
 
   const session =
     functionHelpSelectionSessions.get(
       contextId,
     );
 
+
   if (!session) {
-    return null;
+    return false;
   }
+
 
   const elapsed =
     Date.now() -
     session.createdAt;
 
+
   if (
-    elapsed >
+    elapsed >=
     FUNCTION_HELP_SELECTION_TIMEOUT_MS
   ) {
 
@@ -332,20 +481,15 @@ function getActiveSelectionSession(
       contextId,
     );
 
-    return null;
+    return false;
 
   }
 
-  return session;
+
+  return true;
 
 }
 
-
-/*
- * =====================================================
- * 依目前 Style 取得 Function Help 回覆
- * =====================================================
- */
 
 function getFunctionHelpReply(
   functionId: string,
@@ -353,6 +497,7 @@ function getFunctionHelpReply(
 
   const response =
     getActiveFunctionHelpResponse();
+
 
   switch (
     functionId
@@ -367,6 +512,15 @@ function getFunctionHelpReply(
     case 'location':
       return response.locationDetail;
 
+    case 'style_switch':
+      return response.styleSwitchDetail;
+
+    case 'call_names':
+      return (
+        response.callNamesDetail ||
+        buildActiveCallNamesHelpMessage()
+      );
+
     default:
       return '';
 
@@ -375,44 +529,23 @@ function getFunctionHelpReply(
 }
 
 
-/*
- * =====================================================
- * 後續選擇
- * =====================================================
- *
- * 功能列表建立等待狀態後，
- * 只處理「下一句」的明確選擇：
- *
- * 1 / 2 / 3
- * 投票 / 提醒 / 位置
- *
- * 其他任何內容：
- *
- * 立即清除等待狀態
- * ↓
- * 不接管
- *
- * 因此 Function Help 不會長時間影響後續聊天。
- * =====================================================
- */
-
 function handleSelectionSession(
   message: string,
   contextId: string,
 ): FunctionHelpResult {
 
-  const session =
-    getActiveSelectionSession(
+  if (
+    !hasActiveFunctionHelpSession(
       contextId,
-    );
-
-  if (!session) {
+    )
+  ) {
 
     return {
       handled: false,
     };
 
   }
+
 
   const normalized =
     normalizeText(
@@ -421,23 +554,44 @@ function handleSelectionSession(
       ),
     );
 
+
   const targetFunction =
     findFunctionBySelection(
       normalized,
     );
 
+
   /*
-   * 下一句不是明確選項：
+   * =====================================================
+   * 下一則訊息一定結束 Session
+   * =====================================================
    *
-   * 立即結束等待狀態，
-   * 交回正式功能／Observer／一般 AI。
+   * 無論：
+   *
+   * - 有選到功能
+   * - 沒選到功能
+   * - 是 1 / 2 / 3 / 4 / 5
+   * - 是其他聊天內容
+   *
+   * 都只使用這一次。
+   *
+   * 避免 Function Help 持續佔用路由。
+   * =====================================================
+   */
+
+  clearSelectionSession(
+    contextId,
+  );
+
+
+  /*
+   * 不是選項：
+   *
+   * 不接管，
+   * 交回正常功能／Observer／AI。
    */
 
   if (!targetFunction) {
-
-    clearSelectionSession(
-      contextId,
-    );
 
     return {
       handled: false,
@@ -445,16 +599,10 @@ function handleSelectionSession(
 
   }
 
+
   /*
-   * 正式執行指令優先。
-   *
-   * 例如：
-   *
-   * 投票今天晚餐吃什麼
-   * 提醒我明天倒垃圾
-   * 附近有什麼
-   *
-   * 不能被 Function Help 後續選擇接管。
+   * 正式執行指令優先，
+   * 不讓功能說明攔截真正功能。
    */
 
   if (
@@ -463,23 +611,12 @@ function handleSelectionSession(
     )
   ) {
 
-    clearSelectionSession(
-      contextId,
-    );
-
     return {
       handled: false,
     };
 
   }
 
-  /*
-   * 成功選擇後立即清除狀態。
-   */
-
-  clearSelectionSession(
-    contextId,
-  );
 
   return {
     handled: true,
@@ -500,23 +637,19 @@ export function handleFunctionHelp(
 
   /*
    * =====================================================
-   * 先處理功能列表後的一次性選擇
+   * 先處理「看功能」後的單次選擇
    * =====================================================
    *
-   * 這裡不要求再次使用呼叫詞。
+   * 不需要再次呼叫總管：
    *
-   * 例如：
-   *
-   * 總管有什麼功能
-   * ↓
-   * 功能列表
+   * 阿福 看功能
    * ↓
    * 1
    * ↓
    * 投票說明
    *
-   * 但只限於同一個 Context、
-   * 1 分鐘內的下一句。
+   * 下一則無論是否選擇，
+   * 都會立即結束 Function Help Session。
    * =====================================================
    */
 
@@ -526,6 +659,7 @@ export function handleFunctionHelp(
       contextId,
     );
 
+
   if (
     selectionResult.handled
   ) {
@@ -534,13 +668,11 @@ export function handleFunctionHelp(
 
   }
 
+
   /*
-   * 如果目前還有等待 Session，
-   * 代表上一句不是有效選項，
-   * handleSelectionSession 已經清除。
-   *
-   * 接下來是否重新進入 Function Help，
-   * 仍依照 hasTrigger 決定。
+   * =====================================================
+   * 一般 Function Help 必須有呼叫詞
+   * =====================================================
    */
 
   if (!hasTrigger) {
@@ -551,12 +683,14 @@ export function handleFunctionHelp(
 
   }
 
+
   const normalized =
     normalizeText(
       removeKnownTriggerPrefix(
         message,
       ),
     );
+
 
   if (!normalized) {
 
@@ -565,6 +699,7 @@ export function handleFunctionHelp(
     };
 
   }
+
 
   /*
    * =====================================================
@@ -582,8 +717,10 @@ export function handleFunctionHelp(
       contextId,
     );
 
+
     const response =
       getActiveFunctionHelpResponse();
+
 
     return {
       handled: true,
@@ -593,10 +730,30 @@ export function handleFunctionHelp(
 
   }
 
+
+  /*
+   * =====================================================
+   * 功能辨識
+   * =====================================================
+   *
+   * 包含：
+   *
+   * - 關鍵字功能
+   * - 呼叫詞自然語句
+   *
+   * 例如：
+   *
+   * 阿福可以怎麼叫你
+   * 精靈可以怎麼叫你
+   * 艦橋 AI 有哪些稱呼
+   * =====================================================
+   */
+
   const targetFunction =
     findFunction(
       normalized,
     );
+
 
   if (!targetFunction) {
 
@@ -606,10 +763,9 @@ export function handleFunctionHelp(
 
   }
 
+
   /*
-   * =====================================================
    * 正式執行優先
-   * =====================================================
    */
 
   if (
@@ -624,19 +780,46 @@ export function handleFunctionHelp(
 
   }
 
+
+  /*
+   * =====================================================
+   * 呼叫詞功能
+   * =====================================================
+   *
+   * 自然語句已經由 findFunction()
+   * 辨識完成。
+   *
+   * 不需要再要求：
+   *
+   * 「呼叫詞怎麼用」
+   *
+   * 只要問：
+   *
+   * 可以怎麼叫你
+   *
+   * 就直接回覆目前可用呼叫詞。
+   * =====================================================
+   */
+
+  if (
+    targetFunction.id ===
+      'call_names'
+  ) {
+
+    return {
+      handled: true,
+      reply:
+        getFunctionHelpReply(
+          targetFunction.id,
+        ),
+    };
+
+  }
+
+
   /*
    * =====================================================
    * 直接詢問功能
-   * =====================================================
-   *
-   * 例如：
-   *
-   * 總管，投票
-   * 總管，投票怎麼用
-   * 總管，提醒詳細說明
-   *
-   * 直接說明，
-   * 不建立等待狀態。
    * =====================================================
    */
 
@@ -659,22 +842,13 @@ export function handleFunctionHelp(
 
   }
 
+
   return {
     handled: false,
   };
 
 }
 
-
-/*
- * =====================================================
- * 測試用途
- * =====================================================
- *
- * 正式執行流程不需要直接操作 Session。
- * 這個函式只提供測試環境確認 Context 狀態隔離。
- * =====================================================
- */
 
 export function clearFunctionHelpSession(
   contextId: string,

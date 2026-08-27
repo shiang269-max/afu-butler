@@ -10,6 +10,10 @@ import {
 } from './reminder';
 
 import {
+  getActiveCallNames,
+} from './call-names';
+
+import {
   FAMILY_MEMBERS,
 } from './family';
 
@@ -22,6 +26,8 @@ import {
 import {
   buildReminderResponse,
 } from './styles/style-response';
+
+
 
 
 /*
@@ -3630,29 +3636,47 @@ function isCurrentReminderRequest(
  * Reminder 呼叫詞／指令模式
  * ========================================================= */
 
-const REMINDER_INVOCATION_WORDS = [
-  '大內總管',
-  '總管',
-  '內內',
-  '喳子',
-  '渣子',
-];
-
 function hasReminderInvocation(
   message: string,
 ): boolean {
-  return REMINDER_INVOCATION_WORDS.some(
-    (word) => message.includes(word),
+  const text = message.trim();
+
+  if (!text) {
+    return false;
+  }
+
+  return getActiveCallNames().some(
+    (callName) => text.startsWith(callName),
   );
 }
 
 function stripReminderInvocationWords(
   message: string,
 ): string {
-  return REMINDER_INVOCATION_WORDS.reduce(
-    (text, word) => text.replaceAll(word, ''),
-    message,
-  ).trim();
+  const text = message.trim();
+
+  const callNames = getActiveCallNames()
+    .slice()
+    .sort(
+      (a, b) =>
+        b.length - a.length,
+    );
+
+  for (const callName of callNames) {
+    if (!text.startsWith(callName)) {
+      continue;
+    }
+
+    return text
+      .slice(callName.length)
+      .replace(
+        /^[\s，,、:：]+/,
+        '',
+      )
+      .trim();
+  }
+
+  return text;
 }
 
 /* =========================================================

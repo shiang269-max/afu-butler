@@ -20,6 +20,12 @@ import {
 } from './styles/style-response';
 
 
+import {
+  cleanCallNames,
+  hasCallName,
+} from './call-names';
+
+
 export interface VoteHandlerResult {
   handled: boolean;
   message?: string;
@@ -62,14 +68,9 @@ const pendingVoteStarts =
 function cleanTriggerWords(
   message: string,
 ): string {
-  return message
-    .replace(/大內總管/g, '')
-    .replace(/總管/g, '')
-    .replace(/內內/g, '')
-    .replace(/喳子/g, '')
-    .replace(/渣子/g, '')
-    .replace(/阿福/g, '')
-    .trim();
+  return cleanCallNames(
+    message,
+  );
 }
 
 
@@ -80,16 +81,8 @@ function cleanTriggerWords(
 function hasRequiredVoteInvocation(
   message: string,
 ): boolean {
-  return [
-    '大內總管',
-    '總管',
-    '內內',
-    '喳子',
-    '渣子',
-    '阿福',
-  ].some(
-    (word) =>
-      message.includes(word),
+  return hasCallName(
+    message,
   );
 }
 
