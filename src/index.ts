@@ -9,6 +9,7 @@ import { FAMILY_MEMBERS } from './family';
 import {
   getActiveCallNames,
   hasCallName,
+  cleanCallNames,
   isCallNameHelpIntent,
   buildActiveCallNamesHelpMessage,
 } from './call-names';
@@ -337,12 +338,15 @@ function hasFamilyTargetIntent(
 function hasReminderInvocation(
   message: string,
 ): boolean {
+
   const text =
     message.trim();
+
 
   if (!text) {
     return false;
   }
+
 
   return getActiveCallNames().some(
     (callName) =>
@@ -353,7 +357,18 @@ function hasReminderInvocation(
 
 /**
  * =========================================================
- * 清除總管呼叫詞
+ * 清除有效呼叫詞
+ * =========================================================
+ *
+ * 呼叫詞統一由：
+ *
+ * src/call-names.ts
+ *
+ * 動態管理。
+ *
+ * 這裡不得再寫死任何特定 Style 的呼叫詞，
+ * 避免切換風格後無法正確清除目前有效名稱。
+ *
  * =========================================================
  */
 
@@ -361,14 +376,9 @@ function cleanTriggerWords(
   message: string,
 ): string {
 
-  return message
-    .replace(/大內總管/g, '')
-    .replace(/總管/g, '')
-    .replace(/內內/g, '')
-    .replace(/喳子/g, '')
-    .replace(/渣子/g, '')
-    .replace(/阿福/g, '')
-    .trim();
+  return cleanCallNames(
+    message,
+  );
 }
 
 
@@ -463,13 +473,17 @@ function buildFamilyMemberContexts() {
  * passed into vote-handler.ts / vote.ts.
  * =========================================================
  */
+
 async function generateVoteOptions(
   prompt: string,
 ): Promise<string[]> {
+
   try {
+
     const response =
       await geminiApiManager.execute(
         async (gemini) => {
+
           return gemini.models.generateContent(
             {
               model:
@@ -493,6 +507,7 @@ async function generateVoteOptions(
         },
       );
 
+
     return (
       response.text
         ?.split(/\r?\n/)
@@ -511,14 +526,19 @@ async function generateVoteOptions(
         .slice(0, 4)
       || []
     );
+
   } catch (error) {
+
     logError(
       'Vote 選項產生失敗',
       error,
     );
 
+
     return [];
+
   }
+
 }
 
 
@@ -551,6 +571,7 @@ function createAiContext(
     normalizeConversationMessages(
       historyBeforeMessage,
     );
+
 
   const latestLocation =
     getLatestLocation(
@@ -632,6 +653,7 @@ function createAiContext(
 
     currentMessage,
   });
+
 }
 
 
@@ -648,6 +670,7 @@ app.get(
     res.send(
       'LINE第五個家人正在運作',
     );
+
   },
 );
 
@@ -724,30 +747,38 @@ app.post(
                 return;
               }
 
+
               const locationResult =
                 handleLocationMessage(
                   event,
                 );
 
+
               if (
                 !locationResult.handled
               ) {
+
                 console.warn(
                   '[Location] 無法處理 LINE 位置訊息:',
                   locationResult.reason,
                 );
 
                 return;
+
               }
+
 
               if (
                 event.source.type === 'group' &&
                 event.source.groupId
               ) {
+
                 recordFamilyGroupMessage(
                   event.source.groupId,
                 );
+
               }
+
 
               console.log(
                 '[Location] 已收到位置:',
@@ -755,6 +786,7 @@ app.post(
                   locationResult.location,
                 ),
               );
+
 
               await lineClient.replyMessage(
                 {
@@ -772,7 +804,9 @@ app.post(
                 },
               );
 
+
               return;
+
             }
 
 
@@ -845,6 +879,7 @@ app.post(
               recordFamilyGroupMessage(
                 event.source.groupId,
               );
+
             }
 
 
@@ -891,7 +926,6 @@ app.post(
 
 
 
-
             /*
              * =====================================================
              * 主動呼叫總管／家庭目標意圖
@@ -911,1164 +945,1331 @@ app.post(
 
 
             const shouldInvokeController =
-  hasTrigger ||
-  hasTargetIntent;
-
-const shouldResolveTarget =
-  hasTargetIntent;
-
-/*
- * =====================================================
- * Observer 閉嘴／解除閉嘴
- * =====================================================
- *
- * 這是 Observer 控制指令，不交給 Gemini。
- *
- * 「閉嘴」只暫停被動插話；
- * 之後如果使用者再次明確叫總管，仍會走主動 AI Core。
- * =====================================================
- */
-
-const observerTargetId =
-  event.source.type === 'group'
-    ? event.source.groupId
-    : event.source.userId;
-
-if (
-  observerTargetId &&
-  isObserverMuteCommand(userMessage)
-) {
-
-  const mutedUntil =
-    muteObserver(observerTargetId);
-
-  console.log(
-    `[ObserverRoute][${observerTraceId}] MUTE until=${new Date(mutedUntil).toISOString()}` ,
-  );
-
-  await lineClient.replyMessage(
-    {
-      replyToken: event.replyToken,
-      messages: [
-        {
-          type: 'text',
-          text: buildStyleResponse('喳，遵旨。奴才先安靜。'),
-        },
-      ],
-    },
-  );
-
-  addToMemory(
-    conversationKey,
-    'user',
-    userMessage,
-  );
-
-  addToMemory(
-    conversationKey,
-    'assistant',
-    buildStyleResponse('喳，遵旨。奴才先安靜。'),
-  );
-
-  return;
-}
-
-if (
-  observerTargetId &&
-  isObserverUnmuteCommand(userMessage)
-) {
-
-  unmuteObserver(observerTargetId);
-
-  console.log(
-    `[ObserverRoute][${observerTraceId}] UNMUTE`,
-  );
-
-  await lineClient.replyMessage(
-    {
-      replyToken: event.replyToken,
-      messages: [
-        {
-          type: 'text',
-          text: buildStyleResponse('喳，奴才恢復值班。'),
-        },
-      ],
-    },
-  );
-
-  addToMemory(
-    conversationKey,
-    'user',
-    userMessage,
-  );
-
-  addToMemory(
-    conversationKey,
-    'assistant',
-    buildStyleResponse('喳，奴才恢復值班。'),
-  );
-
-  return;
-}
-
-/*
- * =====================================================
- * LINE 額度查詢
- * =====================================================
- *
- * 這是免費的 Reply Message。
- *
- * 使用：
- * 「內內查詢額度」
- * 「總管 LINE 配額」
- * 「內內剩餘多少額度」
- *
- * 直接查 LINE Messaging API，
- * 不交給 Gemini，避免浪費 Gemini 額度。
- * =====================================================
- */
-
-if (
-  hasTrigger &&
-  /額度|配額/.test(
-    userMessage,
-  )
-) {
-
-  try {
-
-    const quota =
-      await getQuotaSnapshot(
-        lineClient,
-      );
-
-    const quotaReply =
-      formatQuotaSummary(
-        quota,
-      );
-
-    await lineClient.replyMessage(
-      {
-        replyToken:
-          event.replyToken,
-
-        messages: [
-          {
-            type:
-              'text',
-
-            text:
-              quotaReply.slice(
-                0,
-                5000,
-              ),
-          },
-        ],
-      },
-    );
-
-    addToMemory(
-      conversationKey,
-      'user',
-      userMessage,
-    );
-
-    addToMemory(
-      conversationKey,
-      'assistant',
-      quotaReply,
-    );
-
-  } catch (error) {
-
-    logError(
-      'LINE 額度查詢失敗',
-      error,
-    );
-
-    try {
-
-      await lineClient.replyMessage(
-        {
-          replyToken:
-            event.replyToken,
-
-          messages: [
-            {
-              type:
-                'text',
-
-              text:
-                buildStyleResponse('奴才暫時查不到 LINE 額度，請稍後再問。'),
-            },
-          ],
-        },
-      );
-
-    } catch (
-      fallbackError
-    ) {
-
-      logError(
-        'LINE 額度查詢備援回覆失敗',
-        fallbackError,
-      );
-    }
-  }
-
-  return;
-}
-
-/*
- * =====================================================
- * Location Route
- * =====================================================
- *
- * 回家路線需求優先於 Reminder / Observer / AI Core。
- *
- * 例如：
- * - 我回家要多久
- * - 我回到家要多久
- * - 到家還要多久
- * - 回家多遠
- *
- * Handler 自己負責：
- * - 判斷是否為回家路線需求
- * - 確認目前位置
- * - 確認固定家位置
- * - 呼叫 Google Routes Service
- * - 產生安全回覆
- *
- * index.ts 只負責：
- * - 把文字交給 Handler
- * - 將 Handler 結果送回 LINE
- * - 成功或失敗後寫入 Memory
- *
- * 重要：
- * Location Route Handler 若判定 handled=true，
- * 本 event 不得再進入 Reminder / Observer / AI Core，
- * 避免同一個 replyToken 被重複使用。
- * =====================================================
- */
-
-try {
-  const locationRouteResult =
-    await handleHomeRouteRequest(
-      userMessage,
-      event.source.userId || '',
-    );
-
-  if (locationRouteResult.handled) {
-
-    const locationRouteReply =
-      locationRouteResult.replyText ||
-      (
-        locationRouteResult.success
-          ? buildStyleResponse('喳，奴才已取得回家的路程資訊。')
-          : buildStyleResponse('喳，奴才目前無法取得這道位置資訊。')
-      );
-
-    await lineClient.replyMessage(
-      {
-        replyToken:
-          event.replyToken,
-
-        messages: [
-          {
-            type: 'text',
-
-            text:
-              locationRouteReply.slice(
-                0,
-                5000,
-              ),
-          },
-        ],
-      },
-    );
-
-    addToMemory(
-      conversationKey,
-      'user',
-      userMessage,
-    );
-
-    addToMemory(
-      conversationKey,
-      'assistant',
-      locationRouteReply,
-    );
-
-    return;
-  }
-
-} catch (error) {
-  logError(
-    'Location Route 處理失敗',
-    error,
-  );
-
-  /*
-   * Location Route 已經進入獨立處理流程。
-   * 如果 Handler 發生例外，仍然不能讓同一個
-   * replyToken 繼續往下進入 Reminder / AI Core。
-   */
-
-  try {
-    await lineClient.replyMessage(
-      {
-        replyToken:
-          event.replyToken,
-
-        messages: [
-          {
-            type: 'text',
-
-            text:
-              buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。'),
-          },
-        ],
-      },
-    );
-  } catch (fallbackError) {
-    logError(
-      'Location Route 備援回覆失敗',
-      fallbackError,
-    );
-  }
-
-  return;
-}
-
-/*
- * =====================================================
- * Location Intent
- * =====================================================
- *
- * Location Intent 必須在 Reminder / Observer / AI Core 前完成。
- *
- * 規則：
- *
- * 1. handled=false
- *    → 不是位置需求，繼續既有流程。
- *
- * 2. handled=true 且無法安全執行
- *    → 直接回覆 clarificationMessage，然後 return。
- *
- * 3. CURRENT_LOCATION
- *    → 直接使用目前 Location State 回覆。
- *
- * 4. NEAR_CURRENT / NEAR_HOME
- *    → 交給 Location Places Action Handler。
- *
- * 5. HOME_ROUTE
- *    → 已由上面的 Location Route Handler 優先處理。
- *
- * 重要：
- * Location Intent handled=true 後，
- * 本 event 不得再進入 Reminder / Observer / AI Core。
- * =====================================================
- */
-
-try {
-  const locationIntentResult =
-    handleLocationIntent(
-      userMessage,
-      event.source.userId || '',
-    );
-
-  if (
-    locationIntentResult.handled
-  ) {
-    const canExecute =
-      canExecuteLocationIntent(
-        locationIntentResult,
-      );
-
-    let locationReply: string;
-
-    /*
-     * -----------------------------------------------------
-     * 需要補充位置資訊
-     * -----------------------------------------------------
-     */
-
-    if (
-      !canExecute &&
-      locationIntentResult.clarificationRequired
-    ) {
-      locationReply =
-        locationIntentResult.clarificationMessage ||
-        buildStyleResponse('總管目前還缺少必要的位置資訊，請先提供目前位置或設定固定位置。');
-    }
-
-    /*
-     * -----------------------------------------------------
-     * CURRENT_LOCATION
-     * -----------------------------------------------------
-     */
-
-    else if (
-      canExecute &&
-      locationIntentResult.intent ===
-        'CURRENT_LOCATION' &&
-      locationIntentResult.locationResolution?.location
-    ) {
-      const location =
-        locationIntentResult.locationResolution.location;
-
-      locationReply =
-        location.address
-          ? (
-              `主上目前的位置是：` +
-              `${location.address}`
-            )
-          : (
-              `主上目前的位置座標是：` +
-              `${location.latitude}, ` +
-              `${location.longitude}`
-            );
-    }
-
-    /*
-     * -----------------------------------------------------
-     * NEAR_CURRENT / NEAR_HOME
-     * -----------------------------------------------------
-     *
-     * Intent 只負責判斷需求與確認位置是否足夠。
-     * 真正的 Places 搜尋交給 Action Handler。
-     *
-     * Action Handler：
-     *
-     * Location State / Home Location
-     *          ↓
-     * Google Places Service
-     *          ↓
-     * 真實店家結果
-     *
-     * 這裡只負責把結果整理成 LINE 回覆。
-     * -----------------------------------------------------
-     */
-
-    else if (
-      canExecute &&
-      (
-        locationIntentResult.intent ===
-          'NEAR_CURRENT' ||
-        locationIntentResult.intent ===
-          'NEAR_HOME'
-      ) &&
-      locationIntentResult.action
-    ) {
-      try {
-        const placesResult =
-          await handleLocationPlacesAction(
-            {
-              action:
-                locationIntentResult.action ===
-                  'SEARCH_NEAR_HOME'
-                  ? 'SEARCH_NEAR_HOME'
-                  : 'SEARCH_NEAR_CURRENT',
-
-              message:
+              hasTrigger ||
+              hasTargetIntent;
+
+
+            const shouldResolveTarget =
+              hasTargetIntent;
+
+
+            /*
+             * =====================================================
+             * Observer 閉嘴／解除閉嘴
+             * =====================================================
+             *
+             * 這是 Observer 控制指令，不交給 Gemini。
+             *
+             * 「閉嘴」只暫停被動插話；
+             * 之後如果使用者再次明確叫總管，仍會走主動 AI Core。
+             * =====================================================
+             */
+
+            const observerTargetId =
+              event.source.type === 'group'
+                ? event.source.groupId
+                : event.source.userId;
+
+
+            if (
+              observerTargetId &&
+              isObserverMuteCommand(userMessage)
+            ) {
+
+              const mutedUntil =
+                muteObserver(observerTargetId);
+
+
+              console.log(
+                `[ObserverRoute][${observerTraceId}] MUTE until=${new Date(mutedUntil).toISOString()}`,
+              );
+
+
+              await lineClient.replyMessage(
+                {
+                  replyToken: event.replyToken,
+
+                  messages: [
+                    {
+                      type: 'text',
+
+                      text:
+                        buildStyleResponse('喳，遵旨。奴才先安靜。'),
+                    },
+                  ],
+                },
+              );
+
+
+              addToMemory(
+                conversationKey,
+                'user',
                 userMessage,
+              );
 
-              userId:
-                event.source.userId || '',
-            },
-          );
 
-        if (
-          !placesResult.success
-        ) {
-          if (
-            placesResult.reason ===
-              'current-location-unknown'
-          ) {
-            locationReply =
-              buildStyleResponse('喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。');
-          }
+              addToMemory(
+                conversationKey,
+                'assistant',
+                buildStyleResponse('喳，遵旨。奴才先安靜。'),
+              );
 
-          else if (
-            placesResult.reason ===
-              'home-location-unknown'
-          ) {
-            locationReply =
-              buildStyleResponse('喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。');
-          }
 
-          else if (
-            placesResult.reason ===
-              'MISSING_API_KEY'
-          ) {
-            locationReply =
-              buildStyleResponse('喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。');
-          }
+              return;
 
-          else {
-            locationReply =
-              buildStyleResponse('喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。');
-          }
-        }
+            }
 
-        else {
-          const places =
-            placesResult.places || [];
 
-          if (
-            !places.length
-          ) {
-            locationReply =
-              buildStyleResponse('喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。');
-          }
+            if (
+              observerTargetId &&
+              isObserverUnmuteCommand(userMessage)
+            ) {
 
-          else {
-            const placeLines =
-              places
-                .slice(0, 10)
-                .map(
-                  (place: any, index: number) => {
-                    const name =
-                      typeof place?.displayName === 'string'
-                        ? place.displayName
-                        : typeof place?.displayName?.text === 'string'
-                          ? place.displayName.text
-                          : typeof place?.name === 'string'
-                            ? place.name
-                            : '未命名店家';
+              unmuteObserver(observerTargetId);
 
-                    const address =
-                      typeof place?.formattedAddress === 'string'
-                        ? place.formattedAddress
-                        : typeof place?.address === 'string'
-                          ? place.address
-                          : '';
 
-                    const rating =
-                      typeof place?.rating === 'number'
-                        ? `｜評分 ${place.rating}`
-                        : '';
+              console.log(
+                `[ObserverRoute][${observerTraceId}] UNMUTE`,
+              );
 
-                    const distance =
-                      typeof place?.distanceMeters === 'number'
-                        ? `｜約 ${Math.round(place.distanceMeters)} 公尺`
-                        : '';
 
-                    return (
-                      `${index + 1}. ${name}` +
-                      `${rating}` +
-                      `${distance}` +
-                      (address
-                        ? `\n   ${address}`
-                        : '')
-                    );
+              await lineClient.replyMessage(
+                {
+                  replyToken: event.replyToken,
+
+                  messages: [
+                    {
+                      type: 'text',
+
+                      text:
+                        buildStyleResponse('喳，奴才恢復值班。'),
+                    },
+                  ],
+                },
+              );
+
+
+              addToMemory(
+                conversationKey,
+                'user',
+                userMessage,
+              );
+
+
+              addToMemory(
+                conversationKey,
+                'assistant',
+                buildStyleResponse('喳，奴才恢復值班。'),
+              );
+
+
+              return;
+
+            }
+
+
+            /*
+             * =====================================================
+             * LINE 額度查詢
+             * =====================================================
+             *
+             * 這是免費的 Reply Message。
+             *
+             * 使用：
+             * 「內內查詢額度」
+             * 「總管 LINE 配額」
+             * 「內內剩餘多少額度」
+             *
+             * 直接查 LINE Messaging API，
+             * 不交給 Gemini，避免浪費 Gemini 額度。
+             * =====================================================
+             */
+
+            if (
+              hasTrigger &&
+              /額度|配額/.test(
+                userMessage,
+              )
+            ) {
+
+              try {
+
+                const quota =
+                  await getQuotaSnapshot(
+                    lineClient,
+                  );
+
+
+                const quotaReply =
+                  formatQuotaSummary(
+                    quota,
+                  );
+
+
+                await lineClient.replyMessage(
+                  {
+                    replyToken:
+                      event.replyToken,
+
+                    messages: [
+                      {
+                        type:
+                          'text',
+
+                        text:
+                          quotaReply.slice(
+                            0,
+                            5000,
+                          ),
+                      },
+                    ],
                   },
                 );
 
-            const searchLabel =
-              locationIntentResult.intent ===
-                'NEAR_HOME'
-                ? '固定家附近'
-                : '目前位置附近';
-
-            locationReply =
-              buildStyleResponse(`喳，奴才已依照「${searchLabel}」的實際位置查到以下店家：\n\n`) +
-              placeLines.join('\n\n');
-          }
-        }
-
-      } catch (error) {
-        logError(
-          'Location Places Action 處理失敗',
-          error,
-        );
-
-        locationReply =
-          buildStyleResponse('喳，奴才已接到您的附近搜尋需求，但目前無法取得店家資料，請稍後再試。');
-      }
-    }
-
-    /*
-     * -----------------------------------------------------
-     * 其他 handled=true
-     * -----------------------------------------------------
-     */
-
-    else {
-      locationReply =
-        locationIntentResult.clarificationMessage ||
-        buildStyleResponse('喳，奴才已接住這道位置需求，但目前還缺少可以執行的功能。');
-    }
-
-    await lineClient.replyMessage(
-      {
-        replyToken:
-          event.replyToken,
-
-        messages: [
-          {
-            type:
-              'text',
-
-            text:
-              locationReply.slice(
-                0,
-                5000,
-              ),
-          },
-        ],
-      },
-    );
-
-    addToMemory(
-      conversationKey,
-      'user',
-      userMessage,
-    );
-
-    addToMemory(
-      conversationKey,
-      'assistant',
-      locationReply,
-    );
-
-    return;
-  }
-
-} catch (error) {
-  logError(
-    'Location Intent 處理失敗',
-    error,
-  );
-
-  /*
-   * Location Intent 發生例外時，
-   * 不能讓這個 event 繼續進入 Reminder / Observer / AI Core。
-   * 否則可能重複使用同一個 replyToken。
-   */
-
-  try {
-    await lineClient.replyMessage(
-      {
-        replyToken:
-          event.replyToken,
-
-        messages: [
-          {
-            type:
-              'text',
-
-            text:
-              buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。'),
-          },
-        ],
-      },
-    );
-  } catch (fallbackError) {
-    logError(
-      'Location Intent 備援回覆失敗',
-      fallbackError,
-    );
-  }
-
-  return;
-}
-
-/* 
- * =====================================================
- * Style Switch
- * =====================================================
- *
- * 角色風格查詢與切換。
- *
- * 例如：
- *
- * - 阿福，切換風格
- * - 阿福，有哪些風格
- * - 阿福，切換成大內總管
- *
- * Style Switch 不使用 AI。
- *
- * 只有明確呼叫總管時才處理，
- * 避免一般聊天中的「換成」「改成」
- * 被誤判為角色風格切換。
- *
- * 必須放在 Function Help / Vote / Reminder /
- * Observer / AI Core 前面。
- * =====================================================
- */
-
-/*
- * =====================================================
- * Call Name Help
- * =====================================================
- *
- * 查詢目前角色可使用的稱呼。
- *
- * 例如：
- *
- * - 阿福，能怎麼叫你？
- * - 阿福，可以怎麼叫你？
- * - 阿福，你叫什麼？
- * - 阿福，有哪些稱呼？
- *
- * 不使用 AI，直接回覆目前所有有效呼叫詞。
- * =====================================================
- */
-
-if (
-  hasTrigger &&
-  isCallNameHelpIntent(
-    userMessage,
-  )
-) {
-
-  const callNameHelpReply =
-    buildActiveCallNamesHelpMessage();
-
-  await lineClient.replyMessage(
-    {
-      replyToken:
-        event.replyToken,
-
-      messages: [
-        {
-          type:
-            'text',
-
-          text:
-            callNameHelpReply.slice(
-              0,
-              5000,
-            ),
-        },
-      ],
-    },
-  );
-
-  addToMemory(
-    conversationKey,
-    'user',
-    userMessage,
-  );
-
-  addToMemory(
-    conversationKey,
-    'assistant',
-    callNameHelpReply,
-  );
-
-  return;
-}
-
-
-/*
- * =====================================================
- * Style Switch
- * =====================================================
- *
- * 角色風格查詢與切換。
- *
- * 例如：
- *
- * - 阿福，切換風格
- * - 阿福，有哪些風格
- * - 阿福，切換成大內總管
- *
- * Style Switch 不使用 AI。
- *
- * 只有明確呼叫總管時才處理，
- * 避免一般聊天中的「換成」「改成」
- * 被誤判為角色風格切換。
- *
- * 必須放在 Function Help / Vote / Reminder /
- * Observer / AI Core 前面。
- * =====================================================
- */
-
-const styleSwitchResult =
-  handleStyleSwitch(
-    userMessage,
-    conversationKey,
-    hasTrigger,
-  );
-
-if (
-  styleSwitchResult.handled
-) {
-
-    const styleSwitchReply =
-      styleSwitchResult.replyText ||
-      '角色風格設定已處理。';
-
-
-    await lineClient.replyMessage(
-      {
-        replyToken:
-          event.replyToken,
-
-        messages: [
-          {
-            type:
-              'text',
-
-            text:
-              styleSwitchReply.slice(
-                0,
-                5000,
-              ),
-          },
-        ],
-      },
-    );
-
-
-    addToMemory(
-      conversationKey,
-      'user',
-      userMessage,
-    );
-
-
-    addToMemory(
-      conversationKey,
-      'assistant',
-      styleSwitchReply,
-    );
-
-
-    return;
-  }
-
-
-/*
- * =====================================================
- * Function Help
- * =====================================================
- *
- * 群組可直接操作功能的說明入口。
- *
- * 必須使用呼叫詞，例如：
- *
- * - 喳子，有什麼功能
- * - 喳子，功能
- * - 喳子，投票怎麼用
- * - 喳子，提醒怎麼用
- * - 喳子，位置怎麼用
- *
- * Function Help 不使用 AI，
- * 直接由固定功能目錄回覆。
- *
- * 必須放在 Vote 之前，
- * 避免「投票怎麼用」被當成新的投票指令。
- * =====================================================
- */
-
-const functionHelpResult =
-  handleFunctionHelp(
-    userMessage,
-    hasTrigger,
-    conversationKey,
-  );
-
-if (functionHelpResult.handled) {
-  const functionHelpReply =
-    functionHelpResult.reply ||
-    '目前沒有找到這個功能的說明。';
-
-  await lineClient.replyMessage({
-    replyToken:
-      event.replyToken,
-
-    messages: [
-      {
-        type:
-          'text',
-
-        text:
-          functionHelpReply.slice(
-            0,
-            5000,
-          ),
-      },
-    ],
-  });
-
-  addToMemory(
-    conversationKey,
-    'user',
-    userMessage,
-  );
-
-  addToMemory(
-    conversationKey,
-    'assistant',
-    functionHelpReply,
-  );
-
-  return;
-}
-
-
-/*
- * =====================================================
- * Vote
- * =====================================================
- *
- * Vote 必須在 Reminder / Observer / AI Core 前處理。
- *
- * 原因：
- *
- * - ACTIVE 投票中的「1」
- * - 「火鍋」
- * - 「我要投燒肉」
- * - 「改投 2」
- *
- * 都可能不包含「投票」關鍵字，
- * 但已經是明確的投票操作。
- *
- * Vote Handler 自己負責：
- *
- * - 投票狀態
- * - 候選項目
- * - 投票人數
- * - 投票
- * - 改票
- * - 自動完成
- * - 平手
- *
- * index.ts 只負責：
- *
- * - 取得 groupId / userId
- * - 呼叫 Handler
- * - 回覆 LINE
- * - 寫入 Memory
- *
- * Vote 核心與 Persona / style 完全分離。
- * =====================================================
- */
-
-try {
-  const voteContextId =
-    event.source.type === 'group'
-      ? event.source.groupId
-      : event.source.type === 'user'
-        ? event.source.userId
-        : '';
-
-  /**
-   * Vote Session context:
-   *
-   * - 群組 → groupId
-   * - 私訊 → userId
-   *
-   * 私訊使用 userId 作為獨立 Vote Session，
-   * 不與家庭群組 Vote 共用狀態。
-   */
-  if (voteContextId) {
-    const voteResult =
-      await handleVoteMessage({
-        groupId:
-          voteContextId,
-
-        userId:
-          event.source.userId || '',
-
-        message:
-          userMessage,
-
-        generateOptions:
-          generateVoteOptions,
-      });
-
-    if (voteResult.handled) {
-      const voteReply =
-        voteResult.message ||
-        '投票狀態已更新。';
-
-      await lineClient.replyMessage({
-        replyToken:
-          event.replyToken,
-
-        messages: [
-          {
-            type:
-              'text',
-
-            text:
-              voteReply.slice(
-                0,
-                5000,
-              ),
-          },
-        ],
-      });
-
-      addToMemory(
-        conversationKey,
-        'user',
-        userMessage,
-      );
-
-      addToMemory(
-        conversationKey,
-        'assistant',
-        voteReply,
-      );
-
-      return;
-    }
-  }
-} catch (error) {
-  logError(
-    'Vote 處理失敗',
-    error,
-  );
-
-  /**
-   * Vote 一旦進入 Handler，
-   * 就直接結束 event，
-   * 不讓同一個 replyToken 再進入
-   * Reminder / Observer / AI Core。
-   */
-  try {
-    await lineClient.replyMessage({
-      replyToken:
-        event.replyToken,
-
-      messages: [
-        {
-          type:
-            'text',
-
-          text:
-            '投票功能目前無法處理這則訊息，請稍後再試。',
-        },
-      ],
-    });
-  } catch (fallbackError) {
-    logError(
-      'Vote 備援回覆失敗',
-      fallbackError,
-    );
-  }
-
-  return;
-}
-
-
-
-/*
- * =====================================================
- * Reminder
- * =====================================================
- *
- * Reminder Handler 自己負責：
- *
- * - 新建立
- * - 查詢
- * - 修改
- * - 取消
- * - Pending confirmation
- *
- * index.ts 只負責：
- *
- * 1. 把訊息交給 Handler
- * 2. 將 Handler 的結果送回 LINE
- * 3. 執行真正的 Mention
- *
- * 注意：
- * 不再用「訊息是否包含提醒」作為唯一入口。
- * 「1取消」、「取消1」、「同意」等 Pending 操作
- * 本身可能沒有「提醒」兩字，也必須能進 Handler。
- * =====================================================
- */
-
-try {
-  const reminderGroupId =
-    event.source.type === 'group'
-      ? event.source.groupId
-      : loadFamilyGroupId();
-
-  if (reminderGroupId) {
-    const reminderResult =
-      await handleReminderMessage(
-        userMessage,
-        event.source.userId || '',
-        reminderGroupId,
-        gemini,
-        hasReminderInvocation(userMessage),
-      );
-
-    if (reminderResult.handled) {
-      const reminderReply =
-        reminderResult.message ||
-        (
-          reminderResult.created
-            ? buildStyleResponse('已記下，奴才會依旨提醒。')
-            : buildStyleResponse('喳，奴才已處理這道 Reminder。')
-        );
-
-      // LINE Mention 只在群組訊息中執行。
-      // 私訊即使 Handler 回傳 mentionUserIds，也不把 Mention payload
-      // 帶進私訊回覆，避免特殊 Reminder 回覆路徑使用不適合的 payload。
-      const reminderMentionUserIds =
-        event.source.type === 'group'
-          ? reminderResult.mentionUserIds
-          : [];
-
-      const reminderMentionAll =
-        event.source.type === 'group' &&
-        reminderResult.mentionAll === true;
-
-      await sendReminderReply(
-        event.replyToken,
-        reminderReply,
-        reminderMentionUserIds,
-        reminderMentionAll,
-      );
-
-      addToMemory(
-        conversationKey,
-        'user',
-        userMessage,
-      );
-
-      addToMemory(
-        conversationKey,
-        'assistant',
-        reminderReply,
-      );
-
-      return;
-    }
-  }
-} catch (error) {
-  logError(
-    'Reminder 處理失敗',
-    error,
-  );
-
-  /*
-   * Reminder 已經接管這個 event。
-   * 如果 Reminder 回覆階段失敗，不能再把同一個 replyToken
-   * 交給下方 AI Core 二次處理。
-   *
-   * 否則會形成：
-   * Reminder reply 失敗
-   *   ↓
-   * catch 吞掉錯誤
-   *   ↓
-   * AI Core 再次處理同一個 event
-   *   ↓
-   * 再次使用同一個 replyToken
-   *   ↓
-   * LINE Invalid reply token
-   *
-   * 因此這裡直接結束本次 event。
-   */
-  return;
-}
+
+                addToMemory(
+                  conversationKey,
+                  'user',
+                  userMessage,
+                );
+
+
+                addToMemory(
+                  conversationKey,
+                  'assistant',
+                  quotaReply,
+                );
+
+              } catch (error) {
+
+                logError(
+                  'LINE 額度查詢失敗',
+                  error,
+                );
+
+
+                try {
+
+                  await lineClient.replyMessage(
+                    {
+                      replyToken:
+                        event.replyToken,
+
+                      messages: [
+                        {
+                          type:
+                            'text',
+
+                          text:
+                            buildStyleResponse('奴才暫時查不到 LINE 額度，請稍後再問。'),
+                        },
+                      ],
+                    },
+                  );
+
+                } catch (
+                  fallbackError
+                ) {
+
+                  logError(
+                    'LINE 額度查詢備援回覆失敗',
+                    fallbackError,
+                  );
+
+                }
+
+              }
+
+
+              return;
+
+            }
+
+
+            /*
+             * =====================================================
+             * Location Route
+             * =====================================================
+             *
+             * 回家路線需求優先於 Reminder / Observer / AI Core。
+             *
+             * 例如：
+             * - 我回家要多久
+             * - 我回到家要多久
+             * - 到家還要多久
+             * - 回家多遠
+             *
+             * Handler 自己負責：
+             * - 判斷是否為回家路線需求
+             * - 確認目前位置
+             * - 確認固定家位置
+             * - 呼叫 Google Routes Service
+             * - 產生安全回覆
+             *
+             * index.ts 只負責：
+             * - 把文字交給 Handler
+             * - 將 Handler 結果送回 LINE
+             * - 成功或失敗後寫入 Memory
+             *
+             * 重要：
+             * Location Route Handler 若判定 handled=true，
+             * 本 event 不得再進入 Reminder / Observer / AI Core，
+             * 避免同一個 replyToken 被重複使用。
+             * =====================================================
+             */
+
+            try {
+
+              const locationRouteResult =
+                await handleHomeRouteRequest(
+                  userMessage,
+                  event.source.userId || '',
+                );
+
+
+              if (locationRouteResult.handled) {
+
+                const locationRouteReply =
+                  locationRouteResult.replyText ||
+                  (
+                    locationRouteResult.success
+                      ? buildStyleResponse('喳，奴才已取得回家的路程資訊。')
+                      : buildStyleResponse('喳，奴才目前無法取得這道位置資訊。')
+                  );
+
+
+                await lineClient.replyMessage(
+                  {
+                    replyToken:
+                      event.replyToken,
+
+                    messages: [
+                      {
+                        type: 'text',
+
+                        text:
+                          locationRouteReply.slice(
+                            0,
+                            5000,
+                          ),
+                      },
+                    ],
+                  },
+                );
+
+
+                addToMemory(
+                  conversationKey,
+                  'user',
+                  userMessage,
+                );
+
+
+                addToMemory(
+                  conversationKey,
+                  'assistant',
+                  locationRouteReply,
+                );
+
+
+                return;
+
+              }
+
+            } catch (error) {
+
+              logError(
+                'Location Route 處理失敗',
+                error,
+              );
+
+
+              /*
+               * Location Route 已經進入獨立處理流程。
+               * 如果 Handler 發生例外，仍然不能讓同一個
+               * replyToken 繼續往下進入 Reminder / AI Core。
+               */
+
+              try {
+
+                await lineClient.replyMessage(
+                  {
+                    replyToken:
+                      event.replyToken,
+
+                    messages: [
+                      {
+                        type: 'text',
+
+                        text:
+                          buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。'),
+                      },
+                    ],
+                  },
+                );
+
+              } catch (fallbackError) {
+
+                logError(
+                  'Location Route 備援回覆失敗',
+                  fallbackError,
+                );
+
+              }
+
+
+              return;
+
+            }
+
+
+            /*
+             * =====================================================
+             * Location Intent
+             * =====================================================
+             *
+             * Location Intent 必須在 Reminder / Observer / AI Core 前完成。
+             *
+             * 規則：
+             *
+             * 1. handled=false
+             *    → 不是位置需求，繼續既有流程。
+             *
+             * 2. handled=true 且無法安全執行
+             *    → 直接回覆 clarificationMessage，然後 return。
+             *
+             * 3. CURRENT_LOCATION
+             *    → 直接使用目前 Location State 回覆。
+             *
+             * 4. NEAR_CURRENT / NEAR_HOME
+             *    → 交給 Location Places Action Handler。
+             *
+             * 5. HOME_ROUTE
+             *    → 已由上面的 Location Route Handler 優先處理。
+             *
+             * 重要：
+             * Location Intent handled=true 後，
+             * 本 event 不得再進入 Reminder / Observer / AI Core。
+             * =====================================================
+             */
+
+            try {
+
+              const locationIntentResult =
+                handleLocationIntent(
+                  userMessage,
+                  event.source.userId || '',
+                );
+
+
+              if (
+                locationIntentResult.handled
+              ) {
+
+                const canExecute =
+                  canExecuteLocationIntent(
+                    locationIntentResult,
+                  );
+
+
+                let locationReply: string;
+
+
+                /*
+                 * -----------------------------------------------------
+                 * 需要補充位置資訊
+                 * -----------------------------------------------------
+                 */
+
+                if (
+                  !canExecute &&
+                  locationIntentResult.clarificationRequired
+                ) {
+
+                  locationReply =
+                    locationIntentResult.clarificationMessage ||
+                    buildStyleResponse('總管目前還缺少必要的位置資訊，請先提供目前位置或設定固定位置。');
+
+                }
+
+
+                /*
+                 * -----------------------------------------------------
+                 * CURRENT_LOCATION
+                 * -----------------------------------------------------
+                 */
+
+                else if (
+                  canExecute &&
+                  locationIntentResult.intent ===
+                    'CURRENT_LOCATION' &&
+                  locationIntentResult.locationResolution?.location
+                ) {
+
+                  const location =
+                    locationIntentResult.locationResolution.location;
+
+
+                  locationReply =
+                    location.address
+                      ? (
+                          `主上目前的位置是：` +
+                          `${location.address}`
+                        )
+                      : (
+                          `主上目前的位置座標是：` +
+                          `${location.latitude}, ` +
+                          `${location.longitude}`
+                        );
+
+                }
+
+
+                /*
+                 * -----------------------------------------------------
+                 * NEAR_CURRENT / NEAR_HOME
+                 * -----------------------------------------------------
+                 *
+                 * Intent 只負責判斷需求與確認位置是否足夠。
+                 * 真正的 Places 搜尋交給 Action Handler。
+                 *
+                 * Action Handler：
+                 *
+                 * Location State / Home Location
+                 *          ↓
+                 * Google Places Service
+                 *          ↓
+                 * 真實店家結果
+                 *
+                 * 這裡只負責把結果整理成 LINE 回覆。
+                 * -----------------------------------------------------
+                 */
+
+                else if (
+                  canExecute &&
+                  (
+                    locationIntentResult.intent ===
+                      'NEAR_CURRENT' ||
+                    locationIntentResult.intent ===
+                      'NEAR_HOME'
+                  ) &&
+                  locationIntentResult.action
+                ) {
+
+                  try {
+
+                    const placesResult =
+                      await handleLocationPlacesAction(
+                        {
+                          action:
+                            locationIntentResult.action ===
+                              'SEARCH_NEAR_HOME'
+                              ? 'SEARCH_NEAR_HOME'
+                              : 'SEARCH_NEAR_CURRENT',
+
+                          message:
+                            userMessage,
+
+                          userId:
+                            event.source.userId || '',
+                        },
+                      );
+
+
+                    if (
+                      !placesResult.success
+                    ) {
+
+                      if (
+                        placesResult.reason ===
+                          'current-location-unknown'
+                      ) {
+
+                        locationReply =
+                          buildStyleResponse('喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。');
+
+                      }
+
+                      else if (
+                        placesResult.reason ===
+                          'home-location-unknown'
+                      ) {
+
+                        locationReply =
+                          buildStyleResponse('喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。');
+
+                      }
+
+                      else if (
+                        placesResult.reason ===
+                          'MISSING_API_KEY'
+                      ) {
+
+                        locationReply =
+                          buildStyleResponse('喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。');
+
+                      }
+
+                      else {
+
+                        locationReply =
+                          buildStyleResponse('喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。');
+
+                      }
+
+                    }
+
+                    else {
+
+                      const places =
+                        placesResult.places || [];
+
+
+                      if (
+                        !places.length
+                      ) {
+
+                        locationReply =
+                          buildStyleResponse('喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。');
+
+                      }
+
+                      else {
+
+                        const placeLines =
+                          places
+                            .slice(0, 10)
+                            .map(
+                              (place: any, index: number) => {
+
+                                const name =
+                                  typeof place?.displayName === 'string'
+                                    ? place.displayName
+                                    : typeof place?.displayName?.text === 'string'
+                                      ? place.displayName.text
+                                      : typeof place?.name === 'string'
+                                        ? place.name
+                                        : '未命名店家';
+
+
+                                const address =
+                                  typeof place?.formattedAddress === 'string'
+                                    ? place.formattedAddress
+                                    : typeof place?.address === 'string'
+                                      ? place.address
+                                      : '';
+
+
+                                const rating =
+                                  typeof place?.rating === 'number'
+                                    ? `｜評分 ${place.rating}`
+                                    : '';
+
+
+                                const distance =
+                                  typeof place?.distanceMeters === 'number'
+                                    ? `｜約 ${Math.round(place.distanceMeters)} 公尺`
+                                    : '';
+
+
+                                return (
+                                  `${index + 1}. ${name}` +
+                                  `${rating}` +
+                                  `${distance}` +
+                                  (address
+                                    ? `\n   ${address}`
+                                    : '')
+                                );
+
+                              },
+                            );
+
+
+                        const searchLabel =
+                          locationIntentResult.intent ===
+                            'NEAR_HOME'
+                            ? '固定家附近'
+                            : '目前位置附近';
+
+
+                        locationReply =
+                          buildStyleResponse(`喳，奴才已依照「${searchLabel}」的實際位置查到以下店家：\n\n`) +
+                          placeLines.join('\n\n');
+
+                      }
+
+                    }
+
+                  } catch (error) {
+
+                    logError(
+                      'Location Places Action 處理失敗',
+                      error,
+                    );
+
+
+                    locationReply =
+                      buildStyleResponse('喳，奴才已接到您的附近搜尋需求，但目前無法取得店家資料，請稍後再試。');
+
+                  }
+
+                }
+
+
+                /*
+                 * -----------------------------------------------------
+                 * 其他 handled=true
+                 * -----------------------------------------------------
+                 */
+
+                else {
+
+                  locationReply =
+                    locationIntentResult.clarificationMessage ||
+                    buildStyleResponse('喳，奴才已接住這道位置需求，但目前還缺少可以執行的功能。');
+
+                }
+
+
+                await lineClient.replyMessage(
+                  {
+                    replyToken:
+                      event.replyToken,
+
+                    messages: [
+                      {
+                        type:
+                          'text',
+
+                        text:
+                          locationReply.slice(
+                            0,
+                            5000,
+                          ),
+                      },
+                    ],
+                  },
+                );
+
+
+                addToMemory(
+                  conversationKey,
+                  'user',
+                  userMessage,
+                );
+
+
+                addToMemory(
+                  conversationKey,
+                  'assistant',
+                  locationReply,
+                );
+
+
+                return;
+
+              }
+
+            } catch (error) {
+
+              logError(
+                'Location Intent 處理失敗',
+                error,
+              );
+
+
+              /*
+               * Location Intent 發生例外時，
+               * 不能讓這個 event 繼續進入 Reminder / Observer / AI Core。
+               * 否則可能重複使用同一個 replyToken。
+               */
+
+              try {
+
+                await lineClient.replyMessage(
+                  {
+                    replyToken:
+                      event.replyToken,
+
+                    messages: [
+                      {
+                        type:
+                          'text',
+
+                        text:
+                          buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。'),
+                      },
+                    ],
+                  },
+                );
+
+              } catch (fallbackError) {
+
+                logError(
+                  'Location Intent 備援回覆失敗',
+                  fallbackError,
+                );
+
+              }
+
+
+              return;
+
+            }
+
+
+            /*
+             * =====================================================
+             * Style Switch
+             * =====================================================
+             *
+             * 角色風格查詢與切換。
+             *
+             * 例如：
+             *
+             * - 阿福，切換風格
+             * - 阿福，有哪些風格
+             * - 阿福，切換成大內總管
+             *
+             * Style Switch 不使用 AI。
+             *
+             * 只有明確呼叫總管時才處理，
+             * 避免一般聊天中的「換成」「改成」
+             * 被誤判為角色風格切換。
+             *
+             * 必須放在 Function Help / Vote / Reminder /
+             * Observer / AI Core 前面。
+             * =====================================================
+             */
+
+
+            /*
+             * =====================================================
+             * Call Name Help
+             * =====================================================
+             *
+             * 查詢目前角色可使用的稱呼。
+             *
+             * 例如：
+             *
+             * - 阿福，能怎麼叫你？
+             * - 阿福，可以怎麼叫你？
+             * - 阿福，你叫什麼？
+             * - 阿福，有哪些稱呼？
+             *
+             * 不使用 AI，直接回覆目前所有有效呼叫詞。
+             * =====================================================
+             */
+
+            if (
+              hasTrigger &&
+              isCallNameHelpIntent(
+                userMessage,
+              )
+            ) {
+
+              const callNameHelpReply =
+                buildActiveCallNamesHelpMessage();
+
+
+              await lineClient.replyMessage(
+                {
+                  replyToken:
+                    event.replyToken,
+
+                  messages: [
+                    {
+                      type:
+                        'text',
+
+                      text:
+                        callNameHelpReply.slice(
+                          0,
+                          5000,
+                        ),
+                    },
+                  ],
+                },
+              );
+
+
+              addToMemory(
+                conversationKey,
+                'user',
+                userMessage,
+              );
+
+
+              addToMemory(
+                conversationKey,
+                'assistant',
+                callNameHelpReply,
+              );
+
+
+              return;
+
+            }
+
+
+            /*
+             * =====================================================
+             * Style Switch
+             * =====================================================
+             *
+             * 角色風格查詢與切換。
+             *
+             * 例如：
+             *
+             * - 阿福，切換風格
+             * - 阿福，有哪些風格
+             * - 阿福，切換成大內總管
+             *
+             * Style Switch 不使用 AI。
+             *
+             * 只有明確呼叫總管時才處理，
+             * 避免一般聊天中的「換成」「改成」
+             * 被誤判為角色風格切換。
+             *
+             * 必須放在 Function Help / Vote / Reminder /
+             * Observer / AI Core 前面。
+             * =====================================================
+             */
+
+            const styleSwitchResult =
+              handleStyleSwitch(
+                userMessage,
+                conversationKey,
+                hasTrigger,
+              );
+
+
+            if (
+              styleSwitchResult.handled
+            ) {
+
+              const styleSwitchReply =
+                styleSwitchResult.replyText ||
+                '角色風格設定已處理。';
+
+
+              await lineClient.replyMessage(
+                {
+                  replyToken:
+                    event.replyToken,
+
+                  messages: [
+                    {
+                      type:
+                        'text',
+
+                      text:
+                        styleSwitchReply.slice(
+                          0,
+                          5000,
+                        ),
+                    },
+                  ],
+                },
+              );
+
+
+              addToMemory(
+                conversationKey,
+                'user',
+                userMessage,
+              );
+
+
+              addToMemory(
+                conversationKey,
+                'assistant',
+                styleSwitchReply,
+              );
+
+
+              return;
+
+            }
+
+
+            /*
+             * =====================================================
+             * Function Help
+             * =====================================================
+             *
+             * 群組可直接操作功能的說明入口。
+             *
+             * 必須使用呼叫詞，例如：
+             *
+             * - 喳子，有什麼功能
+             * - 喳子，功能
+             * - 喳子，投票怎麼用
+             * - 喳子，提醒怎麼用
+             * - 喳子，位置怎麼用
+             *
+             * Function Help 不使用 AI，
+             * 直接由固定功能目錄回覆。
+             *
+             * 必須放在 Vote 之前，
+             * 避免「投票怎麼用」被當成新的投票指令。
+             * =====================================================
+             */
+
+            const functionHelpResult =
+              handleFunctionHelp(
+                userMessage,
+                hasTrigger,
+                conversationKey,
+              );
+
+
+            if (functionHelpResult.handled) {
+
+              const functionHelpReply =
+                functionHelpResult.reply ||
+                '目前沒有找到這個功能的說明。';
+
+
+              await lineClient.replyMessage({
+                replyToken:
+                  event.replyToken,
+
+                messages: [
+                  {
+                    type:
+                      'text',
+
+                    text:
+                      functionHelpReply.slice(
+                        0,
+                        5000,
+                      ),
+                  },
+                ],
+              });
+
+
+              addToMemory(
+                conversationKey,
+                'user',
+                userMessage,
+              );
+
+
+              addToMemory(
+                conversationKey,
+                'assistant',
+                functionHelpReply,
+              );
+
+
+              return;
+
+            }
+
+
+            /*
+             * =====================================================
+             * Vote
+             * =====================================================
+             *
+             * Vote 必須在 Reminder / Observer / AI Core 前處理。
+             *
+             * 原因：
+             *
+             * - ACTIVE 投票中的「1」
+             * - 「火鍋」
+             * - 「我要投燒肉」
+             * - 「改投 2」
+             *
+             * 都可能不包含「投票」關鍵字，
+             * 但已經是明確的投票操作。
+             *
+             * Vote Handler 自己負責：
+             *
+             * - 投票狀態
+             * - 候選項目
+             * - 投票人數
+             * - 投票
+             * - 改票
+             * - 自動完成
+             * - 平手
+             *
+             * index.ts 只負責：
+             *
+             * - 取得 groupId / userId
+             * - 呼叫 Handler
+             * - 回覆 LINE
+             * - 寫入 Memory
+             *
+             * Vote 核心與 Persona / style 完全分離。
+             * =====================================================
+             */
+
+            try {
+
+              const voteContextId =
+                event.source.type === 'group'
+                  ? event.source.groupId
+                  : event.source.type === 'user'
+                    ? event.source.userId
+                    : '';
+
+
+              /**
+               * Vote Session context:
+               *
+               * - 群組 → groupId
+               * - 私訊 → userId
+               *
+               * 私訊使用 userId 作為獨立 Vote Session，
+               * 不與家庭群組 Vote 共用狀態。
+               */
+
+              if (voteContextId) {
+
+                const voteResult =
+                  await handleVoteMessage({
+                    groupId:
+                      voteContextId,
+
+                    userId:
+                      event.source.userId || '',
+
+                    message:
+                      userMessage,
+
+                    generateOptions:
+                      generateVoteOptions,
+                  });
+
+
+                if (voteResult.handled) {
+
+                  const voteReply =
+                    voteResult.message ||
+                    '投票狀態已更新。';
+
+
+                  await lineClient.replyMessage({
+                    replyToken:
+                      event.replyToken,
+
+                    messages: [
+                      {
+                        type:
+                          'text',
+
+                        text:
+                          voteReply.slice(
+                            0,
+                            5000,
+                          ),
+                      },
+                    ],
+                  });
+
+
+                  addToMemory(
+                    conversationKey,
+                    'user',
+                    userMessage,
+                  );
+
+
+                  addToMemory(
+                    conversationKey,
+                    'assistant',
+                    voteReply,
+                  );
+
+
+                  return;
+
+                }
+
+              }
+
+            } catch (error) {
+
+              logError(
+                'Vote 處理失敗',
+                error,
+              );
+
+
+              /**
+               * Vote 一旦進入 Handler，
+               * 就直接結束 event，
+               * 不讓同一個 replyToken 再進入
+               * Reminder / Observer / AI Core。
+               */
+
+              try {
+
+                await lineClient.replyMessage({
+                  replyToken:
+                    event.replyToken,
+
+                  messages: [
+                    {
+                      type:
+                        'text',
+
+                      text:
+                        '投票功能目前無法處理這則訊息，請稍後再試。',
+                    },
+                  ],
+                });
+
+              } catch (fallbackError) {
+
+                logError(
+                  'Vote 備援回覆失敗',
+                  fallbackError,
+                );
+
+              }
+
+
+              return;
+
+            }
+
+
+
+
+            /*
+             * =====================================================
+             * Reminder
+             * =====================================================
+             *
+             * Reminder Handler 自己負責：
+             *
+             * - 新建立
+             * - 查詢
+             * - 修改
+             * - 取消
+             * - Pending confirmation
+             *
+             * index.ts 只負責：
+             *
+             * 1. 把訊息交給 Handler
+             * 2. 將 Handler 的結果送回 LINE
+             * 3. 執行真正的 Mention
+             *
+             * 注意：
+             * 不再用「訊息是否包含提醒」作為唯一入口。
+             * 「1取消」、「取消1」、「同意」等 Pending 操作
+             * 本身可能沒有「提醒」兩字，也必須能進 Handler。
+             * =====================================================
+             */
+
+            try {
+
+              const reminderGroupId =
+                event.source.type === 'group'
+                  ? event.source.groupId
+                  : loadFamilyGroupId();
+
+
+              if (reminderGroupId) {
+
+                const reminderResult =
+                  await handleReminderMessage(
+                    userMessage,
+                    event.source.userId || '',
+                    reminderGroupId,
+                    gemini,
+                    hasReminderInvocation(userMessage),
+                  );
+
+
+                if (reminderResult.handled) {
+
+                  const reminderReply =
+                    reminderResult.message ||
+                    (
+                      reminderResult.created
+                        ? buildStyleResponse('已記下，奴才會依旨提醒。')
+                        : buildStyleResponse('喳，奴才已處理這道 Reminder。')
+                    );
+
+
+                  // LINE Mention 只在群組訊息中執行。
+                  // 私訊即使 Handler 回傳 mentionUserIds，也不把 Mention payload
+                  // 帶進私訊回覆，避免特殊 Reminder 回覆路徑使用不適合的 payload。
+                  const reminderMentionUserIds =
+                    event.source.type === 'group'
+                      ? reminderResult.mentionUserIds
+                      : [];
+
+
+                  const reminderMentionAll =
+                    event.source.type === 'group' &&
+                    reminderResult.mentionAll === true;
+
+
+                  await sendReminderReply(
+                    event.replyToken,
+                    reminderReply,
+                    reminderMentionUserIds,
+                    reminderMentionAll,
+                  );
+
+
+                  addToMemory(
+                    conversationKey,
+                    'user',
+                    userMessage,
+                  );
+
+
+                  addToMemory(
+                    conversationKey,
+                    'assistant',
+                    reminderReply,
+                  );
+
+
+                  return;
+
+                }
+
+              }
+
+            } catch (error) {
+
+              logError(
+                'Reminder 處理失敗',
+                error,
+              );
+
+
+              /*
+               * Reminder 已經接管這個 event。
+               * 如果 Reminder 回覆階段失敗，不能再把同一個 replyToken
+               * 交給下方 AI Core 二次處理。
+               *
+               * 否則會形成：
+               * Reminder reply 失敗
+               *   ↓
+               * catch 吞掉錯誤
+               *   ↓
+               * AI Core 再次處理同一個 event
+               *   ↓
+               * 再次使用同一個 replyToken
+               *   ↓
+               * LINE Invalid reply token
+               *
+               * 因此這裡直接結束本次 event。
+               */
+
+              return;
+
+            }
+
 
             /*
              * =====================================================
@@ -2086,6 +2287,7 @@ try {
               `[ObserverRoute][${observerTraceId}] ROUTE_DECISION shouldInvokeController=${shouldInvokeController} elapsed=${Date.now() - eventReceivedAt}ms message=${JSON.stringify(userMessage)}`,
             );
 
+
             if (!shouldInvokeController) {
 
               addToMemory(
@@ -2102,8 +2304,13 @@ try {
 
 
               if (!targetId) {
-                console.log(`[ObserverRoute][${observerTraceId}] OBSERVER_SKIP reason=no-target elapsed=${Date.now() - eventReceivedAt}ms`);
+
+                console.log(
+                  `[ObserverRoute][${observerTraceId}] OBSERVER_SKIP reason=no-target elapsed=${Date.now() - eventReceivedAt}ms`,
+                );
+
                 return;
+
               }
 
 
@@ -2111,10 +2318,14 @@ try {
                 `[ObserverRoute][${observerTraceId}] OBSERVER_ENTER elapsed=${Date.now() - eventReceivedAt}ms target=${targetId} replyRemaining=${Math.max(0, eventReceivedAt + 4500 - Date.now())}ms`,
               );
 
+
               observeMessage(
                 {
-                  diagnosticTraceId: observerTraceId,
+                  diagnosticTraceId:
+                    observerTraceId,
+
                   eventReceivedAt,
+
                   targetId,
 
                   userMessage,
@@ -2140,8 +2351,8 @@ try {
                         latestHistory,
                         '',
                       );
-                    },
 
+                    },
 
                   gemini,
 
@@ -2158,12 +2369,14 @@ try {
                         'assistant',
                         replyText,
                       );
+
                     },
                 },
               );
 
 
               return;
+
             }
 
 
@@ -2177,10 +2390,10 @@ try {
 
               /*
                * ===================================================
-               * 去掉「喳子／總管」等呼叫詞。
+               * 去掉目前有效的呼叫詞。
                *
-               * 但如果沒有呼叫詞，
-               * 就保留原始訊息。
+               * 呼叫詞由 call-names.ts 動態取得，
+               * 不再寫死任何宮廷 Style 名稱。
                *
                * 例如：
                *
@@ -2263,7 +2476,9 @@ try {
 
                 } else {
 
+
                 }
+
               }
 
 
@@ -2392,7 +2607,6 @@ try {
                 replyText,
               );
 
-
             } catch (error) {
 
               /*
@@ -2427,7 +2641,6 @@ try {
                   },
                 );
 
-
               } catch (
                 fallbackError
               ) {
@@ -2436,8 +2649,11 @@ try {
                   'LINE 備援回覆失敗',
                   fallbackError,
                 );
+
               }
+
             }
+
           },
         ),
       );
@@ -2455,7 +2671,9 @@ try {
 
 
       res.sendStatus(500);
+
     }
+
   },
 );
 
@@ -2482,23 +2700,30 @@ async function sendReminderReply(
   mentionUserIds: string[] = [],
   mentionAll = false,
 ): Promise<void> {
+
   const safeReply =
     replyText.slice(
       0,
       4950,
     );
 
+
   if (mentionAll) {
+
     await lineClient.replyMessage({
       replyToken,
+
       messages: [
         {
           type: 'textV2',
+
           text:
             `{target} ${safeReply}`,
+
           substitution: {
             target: {
               type: 'mention',
+
               mentionee: {
                 type: 'all',
               },
@@ -2508,8 +2733,11 @@ async function sendReminderReply(
       ],
     });
 
+
     return;
+
   }
+
 
   const uniqueUserIds =
     [...new Set(
@@ -2520,9 +2748,12 @@ async function sendReminderReply(
       ),
     )];
 
+
   if (!uniqueUserIds.length) {
+
     await lineClient.replyMessage({
       replyToken,
+
       messages: [
         {
           type: 'text',
@@ -2531,42 +2762,57 @@ async function sendReminderReply(
       ],
     });
 
+
     return;
+
   }
 
+
   const substitutions: Record<string, any> = {};
+
 
   const mentionText =
     uniqueUserIds
       .map((userId, index) => {
+
         const key =
           `mention${index}`;
 
+
         substitutions[key] = {
           type: 'mention',
+
           mentionee: {
             type: 'user',
             userId,
           },
         };
 
+
         return `{${key}}`;
+
       })
       .join(' ');
 
+
   await lineClient.replyMessage({
     replyToken,
+
     messages: [
       {
         type: 'textV2',
+
         text:
           `${mentionText} ${safeReply}`,
+
         substitution:
           substitutions,
       } as any,
     ],
   });
+
 }
+
 
 async function sendAiReply(
   replyToken: string,
@@ -2583,7 +2829,6 @@ async function sendAiReply(
 
         member: {
           identity: string;
-
           mentionName: string;
         };
       }
@@ -2635,6 +2880,7 @@ async function sendAiReply(
 
 
     return;
+
   }
 
 
@@ -2679,6 +2925,7 @@ async function sendAiReply(
 
 
     return;
+
   }
 
 
@@ -2705,6 +2952,7 @@ async function sendAiReply(
       ],
     },
   );
+
 }
 
 
@@ -2742,6 +2990,7 @@ async function generateProactiveReply(
       '諸位，夜深了，奴才先向各位道一聲晚安。' +
       '若還有什麼吩咐，隨時喚奴才一聲便是。',
     );
+
   }
 
 
@@ -2798,6 +3047,7 @@ async function generateProactiveReply(
     response.text?.trim() ||
     buildStyleResponse('諸位都如此安靜，奴才倒有些不習慣了。')
   );
+
 }
 
 
@@ -2831,5 +3081,6 @@ app.listen(
       lineClient,
       generateProactiveReply,
     );
+
   },
 );

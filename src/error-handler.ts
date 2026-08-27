@@ -4,7 +4,7 @@
  * 負責：
  * 1. 統一記錄錯誤
  * 2. 判斷是否可能是 Gemini / API 限流
- * 3. 提供總管風格的備援訊息
+ * 3. 提供依目前 Style 顯示的備援訊息
  *
  * 不負責：
  * - Persona
@@ -208,13 +208,17 @@ export function logError(
 
 /*
  * 提供給使用者看到的
- * 總管式備援訊息。
+ * 備援訊息。
  *
  * 注意：
  * 不把 API 技術錯誤暴露給家人。
  *
+ * 不再在這裡寫死任何宮廷風格詞彙。
+ *
  * 所有最終回覆統一經過
- * Style Response Layer。
+ * Style Response Layer，
+ * 由目前 Active Style
+ * 轉換成對應的語言風格。
  */
 export function getFallbackMessage(
   error: unknown,
@@ -235,23 +239,23 @@ export function getFallbackMessage(
 
     case 'rate_limit':
       content =
-        '啟奏……內務府今日似乎也有點忙。';
+        '我這邊現在有點忙，晚一點再試一次。';
       break;
 
     case 'network':
       content =
-        '啟奏……奴才剛才好像被風吹斷線了。';
+        '我剛才好像斷線了一下，請再試一次。';
       break;
 
     case 'api':
       content =
-        '啟奏……內務府出了點小差錯。';
+        '我這邊出了點小問題，請再試一次。';
       break;
 
     case 'unknown':
     default:
       content =
-        '啟奏……奴才剛才突然失神了一下。';
+        '我剛才好像失神了一下，請再試一次。';
       break;
   }
 

@@ -140,9 +140,9 @@ export function buildStyleResponse(
 
       replacements.push(
         ['主上', '艦長'],
-        ['奴才', '艦橋 AI'],
+        ['奴才', '艦橋'],
         ['喳', '收到'],
-        ['總管', '艦橋 AI'],
+        ['總管', '艦橋'],
       );
 
       break;
@@ -158,9 +158,9 @@ export function buildStyleResponse(
 
       replacements.push(
         ['主上', '指揮官'],
-        ['奴才', '勤務兵'],
+        ['奴才', '勤務'],
         ['喳', '收到'],
-        ['總管', '勤務兵'],
+        ['總管', '勤務'],
       );
 
       break;
