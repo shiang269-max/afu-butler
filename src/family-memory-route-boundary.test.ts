@@ -26,6 +26,8 @@ function createIntegration(): FamilyMemoryIntegration {
   return new FamilyMemoryIntegration(store);
 }
 
+const FATHER_USER_ID = 'U59a66400a022a3ca71623a459b47ca56';
+
 test('既有功能已認領時 Memory 不得解析或執行', () => {
   const integration = createIntegration();
   const result = routeFamilyMemoryMessage('幫我開一個投票：晚餐吃什麼', {
@@ -79,6 +81,51 @@ test('沒有既有功能認領時才允許 Memory 執行', () => {
 
   assert(result.type === 'executed', '應由 Memory 執行');
   assert(integration.listMemories().length === 1, '應新增一筆 Memory');
+});
+
+test('「我」應依 LINE userId 解析成爸爸', () => {
+  const integration = createIntegration();
+  const result = routeFamilyMemoryMessage('記住我愛喝茶', {
+    existingFunctionMatched: false,
+    actorUserId: FATHER_USER_ID,
+    integration,
+  });
+
+  assert(result.type === 'executed', '應由 Memory 執行');
+  const memories = integration.listMemories();
+  assert(memories.length === 1, '應新增一筆 Memory');
+  assert(memories[0].subject === '爸爸', '發話者應解析成爸爸');
+  assert(memories[0].content === '愛喝茶', '內容應保留');
+});
+
+test('阿福自然查詢可進入 Memory', () => {
+  const integration = createIntegration();
+  integration.addMemory({
+    subject: '媽媽',
+    content: '喜歡無糖茶',
+  });
+
+  const result = routeFamilyMemoryMessage('阿福，媽媽喜歡什麼', {
+    existingFunctionMatched: false,
+    actorUserId: FATHER_USER_ID,
+    integration,
+  });
+
+  assert(result.type === 'executed', '自然查詢應由 Memory 執行');
+  if (result.type !== 'executed') return;
+  assert(result.intent.type === 'query_memory', '應解析成 query_memory');
+  assert(result.result.type === 'memories_found', '應找到媽媽的記憶');
+});
+
+test('沒有阿福的自然查詢不得進入 Memory', () => {
+  const integration = createIntegration();
+  const result = routeFamilyMemoryMessage('媽媽喜歡什麼', {
+    existingFunctionMatched: false,
+    actorUserId: FATHER_USER_ID,
+    integration,
+  });
+
+  assert(result.type === 'not_handled', '沒有阿福不得喚起 Memory');
 });
 
 test('未知語句不得進入 Memory 執行', () => {
