@@ -10,6 +10,14 @@ describe('Memory 2.0 Intent 呼叫詞防誤觸', () => {
     expect(intent.input.content).toBe('不吃香菜');
   });
 
+  it('沒有指定人物的記憶保留為待身份解析', () => {
+    const intent = parseFamilyMemoryIntent('記住我愛喝茶');
+    expect(intent.type).toBe('add_memory');
+    if (intent.type !== 'add_memory') return;
+    expect(intent.input.subject).toBe('我');
+    expect(intent.input.content).toBe('愛喝茶');
+  });
+
   it('阿福查詢人物記憶可解析為 query_memory', () => {
     const intent = parseFamilyMemoryIntent('阿福，幫我查爸爸的記憶');
     expect(intent.type).toBe('query_memory');
@@ -18,12 +26,27 @@ describe('Memory 2.0 Intent 呼叫詞防誤觸', () => {
     expect(intent.query.keyword).toBeUndefined();
   });
 
+  it('阿福自然語句查詢人物記憶可解析為 query_memory', () => {
+    for (const text of [
+      '阿福，媽媽喜歡什麼',
+      '阿福媽媽喜歡什麼',
+      '阿福，爸爸不吃什麼',
+    ]) {
+      const intent = parseFamilyMemoryIntent(text);
+      expect(intent.type).toBe('query_memory');
+      if (intent.type !== 'query_memory') continue;
+      expect(intent.query.subject).toBe(text.includes('媽媽') ? '媽媽' : '爸爸');
+    }
+  });
+
   it('沒有阿福的查詢不得喚起 Memory', () => {
     for (const text of [
       '查爸爸的記憶',
       '找爸爸的資料',
       '看看爸爸的事情',
       '有沒有爸爸的記憶',
+      '媽媽喜歡什麼',
+      '爸爸不吃什麼',
     ]) {
       expect(parseFamilyMemoryIntent(text).type).toBe('unknown');
     }
