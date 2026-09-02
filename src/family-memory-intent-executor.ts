@@ -11,6 +11,7 @@ export type FamilyMemoryExecutionResult =
   | { type: 'memory_added'; memory: FamilyMemory }
   | { type: 'memories_found'; memories: FamilyMemory[] }
   | { type: 'memory_forgotten'; memory: FamilyMemory }
+  | { type: 'memories_forgotten'; memories: FamilyMemory[] }
   | { type: 'memory_updated'; memory: FamilyMemory }
   | { type: 'record_added'; record: LifeRecord }
   | { type: 'records_found'; records: LifeRecord[] }
@@ -74,6 +75,18 @@ export function executeFamilyMemoryIntent(
       }
 
       return { type: 'memory_forgotten', memory };
+    }
+
+    case 'cancel_pending_memories': {
+      const memories = intent.input.ids
+        .map((id) => integration.getMemory(id))
+        .filter((memory): memory is FamilyMemory => Boolean(memory));
+
+      const forgotten = memories.filter((memory) => integration.forgetMemory(memory.id));
+
+      return forgotten.length
+        ? { type: 'memories_forgotten', memories: forgotten }
+        : { type: 'not_found', query: intent.input.ids.join(',') };
     }
 
     case 'add_record':
