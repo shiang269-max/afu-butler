@@ -47,7 +47,7 @@ function extractSubject(text: string): string | undefined {
 }
 
 function extractUnit(text: string): string | undefined {
-  const match = text.match(/(公斤|kg|小時|分鐘|度|公分|公尺|次|元)\b?/i);
+  const match = text.match(/(公斤|kg|小時|分鐘|度|公分|公尺|次|元)/i);
   return match?.[1];
 }
 
