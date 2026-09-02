@@ -79,14 +79,14 @@ function extractContentAfterSubject(text: string, subject?: string): string {
 
 function extractMemoryQuery(text: string): MemoryQuery {
   const subject = extractSubject(text);
-  const withoutPrefix = text
+  let keyword = text
     .replace(/^(請)?(幫我)?(查|找|搜尋|看看|列出|告訴我)\s*/u, '')
     .replace(/(記憶|記得|事情|資料|資訊)/g, '')
     .trim();
 
-  const keyword = subject
-    ? withoutPrefix.replace(subject, '').trim()
-    : withoutPrefix;
+  if (subject) {
+    keyword = keyword.replace(new RegExp(subject, 'g'), '').trim();
+  }
 
   return {
     ...(subject ? { subject } : {}),
