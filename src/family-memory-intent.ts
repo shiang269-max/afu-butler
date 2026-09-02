@@ -1,4 +1,8 @@
 import { MemoryQuery, RecordQuery } from './family-memory';
+import {
+  resolveFamilyAlias,
+  resolveFamilyTitle,
+} from './family-title-resolver';
 
 export type FamilyMemoryIntent =
   | {
@@ -62,6 +66,16 @@ function hasMemoryCallName(text: string): boolean {
 }
 
 function extractSubject(text: string): string | undefined {
+  const styleTarget = resolveFamilyTitle(text);
+  if (styleTarget) {
+    return styleTarget.member.primaryNames[0] || styleTarget.member.identity;
+  }
+
+  const aliasTarget = resolveFamilyAlias(text);
+  if (aliasTarget) {
+    return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
+  }
+
   return SUBJECTS.find((subject) => text.includes(subject));
 }
 
