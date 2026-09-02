@@ -9,20 +9,19 @@ import {
 import { FamilyMemoryIntegration } from './family-memory-integration';
 import { resolveFamilyMemorySubject } from './family-memory-subject';
 import { resolveFamilyTitle } from './family-title-resolver';
+import {
+  consumePendingFamilyMemory,
+  setPendingFamilyMemory,
+} from './family-memory-pending';
 
 export type FamilyMemoryRouteResult =
-  | {
-      type: 'skipped_existing_function';
-    }
+  | { type: 'skipped_existing_function' }
   | {
       type: 'executed';
       intent: FamilyMemoryIntent;
       result: FamilyMemoryExecutionResult;
     }
-  | {
-      type: 'not_handled';
-      intent: FamilyMemoryIntent;
-    };
+  | { type: 'not_handled'; intent: FamilyMemoryIntent };
 
 export type FamilyMemoryRouteOptions = {
   existingFunctionMatched: boolean;
@@ -30,48 +29,27 @@ export type FamilyMemoryRouteOptions = {
   integration?: FamilyMemoryIntegration;
 };
 
-function normalizeStyleFamilyTitle(
-  text: string,
-): string {
-  const target =
-    resolveFamilyTitle(text);
+function normalizeStyleFamilyTitle(text: string): string {
+  const target = resolveFamilyTitle(text);
+  if (!target) return text;
 
-  if (!target) {
-    return text;
-  }
+  const primaryName = target.member.primaryNames[0] || target.member.identity;
+  if (!primaryName) return text;
 
-  const primaryName =
-    target.member.primaryNames[0]
-    || target.member.identity;
-
-  if (!primaryName) {
-    return text;
-  }
-
-  return text
-    .split(target.title)
-    .join(primaryName);
+  return text.split(target.title).join(primaryName);
 }
 
 function resolveActorSubject(
   intent: FamilyMemoryIntent,
   actorUserId?: string,
 ): FamilyMemoryIntent {
-  const resolveSubject = (
-    subject: string | undefined,
-  ): string | undefined => {
-    const styleTarget =
-      resolveFamilyTitle(subject || '');
-
+  const resolveSubject = (subject: string | undefined): string | undefined => {
+    const styleTarget = resolveFamilyTitle(subject || '');
     if (styleTarget) {
-      return styleTarget.member.primaryNames[0]
-        || styleTarget.member.identity;
+      return styleTarget.member.primaryNames[0] || styleTarget.member.identity;
     }
 
-    return resolveFamilyMemorySubject(
-      subject,
-      actorUserId,
-    );
+    return resolveFamilyMemorySubject(subject, actorUserId);
   };
 
   if (intent.type === 'add_memory') {
@@ -79,8 +57,7 @@ function resolveActorSubject(
       ...intent,
       input: {
         ...intent.input,
-        subject: resolveSubject(intent.input.subject)
-          || intent.input.subject,
+        subject: resolveSubject(intent.input.subject) || intent.input.subject,
       },
     };
   }
@@ -95,24 +72,21 @@ function resolveActorSubject(
     };
   }
 
+  if (intent.type === 'add_record') {
+    return {
+      ...intent,
+      input: {
+        ...intent.input,
+        subject: resolveSubject(intent.input.subject) || intent.input.subject,
+      },
+    };
+  }
+
   if (
-    intent.type === 'add_record' ||
     intent.type === 'list_records' ||
     intent.type === 'average' ||
     intent.type === 'trend'
   ) {
-    if (intent.type === 'add_record') {
-      return {
-        ...intent,
-        input: {
-          ...intent.input,
-          subject:
-            resolveSubject(intent.input.subject)
-            || intent.input.subject,
-        },
-      };
-    }
-
     return {
       ...intent,
       query: {
@@ -125,12 +99,45 @@ function resolveActorSubject(
   return intent;
 }
 
+function parsePendingMemoryAction(
+  text: string,
+  memories: Array<{ id: string }>,
+): FamilyMemoryIntent | null {
+  const normalized = text.trim();
+
+  const cancelMatch = normalized.match(/^(?:取消|刪除)\s*(\d+)$/u);
+  if (cancelMatch) {
+    const index = Number(cancelMatch[1]) - 1;
+    const memory = memories[index];
+    return memory
+      ? { type: 'cancel_pending_memory', input: { id: memory.id } }
+      : null;
+  }
+
+  const updateMatch = normalized.match(
+    /^修改\s*(\d+)\s*(?:為|成|改成)\s*(.+)$/u,
+  );
+  if (updateMatch) {
+    const index = Number(updateMatch[1]) - 1;
+    const memory = memories[index];
+    const content = updateMatch[2].trim();
+
+    if (memory && content) {
+      return {
+        type: 'update_memory',
+        input: { id: memory.id, content },
+      };
+    }
+  }
+
+  return null;
+}
+
 /**
  * Family Memory 與既有總管功能之間的安全邊界。
  *
  * 既有功能一旦已經認領訊息，Memory 不得再解析或執行同一則訊息。
- * 因此這個邊界必須由既有路由先決定 existingFunctionMatched，
- * Memory 本身不反向猜測 Vote / Reminder / Location / Function Help。
+ * 下一句修改／取消狀態只在本次 route invocation 消費一次。
  */
 export function routeFamilyMemoryMessage(
   text: string,
@@ -140,34 +147,39 @@ export function routeFamilyMemoryMessage(
     return { type: 'skipped_existing_function' };
   }
 
-  const normalizedText =
-    normalizeStyleFamilyTitle(text);
-
-  const parsedIntent =
-    parseFamilyMemoryIntent(normalizedText);
-
-  if (parsedIntent.type === 'unknown') {
-    return { type: 'not_handled', intent: parsedIntent };
-  }
-
-  const intent = resolveActorSubject(
-    parsedIntent,
-    options.actorUserId,
-  );
-
   const integration = options.integration;
   if (!integration) {
     throw new Error('執行 Family Memory 必須提供 Integration');
   }
 
-  const result = executeFamilyMemoryIntent(intent, integration);
-  if (!result) {
-    return { type: 'not_handled', intent };
+  const pending = options.actorUserId
+    ? consumePendingFamilyMemory(options.actorUserId)
+    : null;
+
+  if (pending) {
+    const pendingIntent = parsePendingMemoryAction(text, pending.memories);
+    if (pendingIntent) {
+      const result = executeFamilyMemoryIntent(pendingIntent, integration);
+      if (result) {
+        return { type: 'executed', intent: pendingIntent, result };
+      }
+    }
   }
 
-  return {
-    type: 'executed',
-    intent,
-    result,
-  };
+  const normalizedText = normalizeStyleFamilyTitle(text);
+  const parsedIntent = parseFamilyMemoryIntent(normalizedText);
+
+  if (parsedIntent.type === 'unknown') {
+    return { type: 'not_handled', intent: parsedIntent };
+  }
+
+  const intent = resolveActorSubject(parsedIntent, options.actorUserId);
+  const result = executeFamilyMemoryIntent(intent, integration);
+  if (!result) return { type: 'not_handled', intent };
+
+  if (intent.type === 'query_memory' && result.type === 'memories_found') {
+    setPendingFamilyMemory(options.actorUserId || '', result.memories.slice(0, 10));
+  }
+
+  return { type: 'executed', intent, result };
 }
