@@ -16,8 +16,8 @@ function createIntegration(): FamilyMemoryIntegration {
 
 describe('Family Memory edit flow', () => {
   it('records the mentioned family member rather than the actor', () => {
+    const actorUserId = 'U59a66400a022a3ca71623a459b47ca56';
     const integration = createIntegration();
-    const actorUserId = 'dad-user';
 
     const addChild = routeFamilyMemoryMessage(
       '阿福記住辰喜歡吃肉',
@@ -45,8 +45,8 @@ describe('Family Memory edit flow', () => {
   });
 
   it('allows modify or cancel only on the immediate next turn', () => {
+    const actorUserId = 'U59a66400a022a3ca71623a459b47ca56';
     const integration = createIntegration();
-    const actorUserId = 'dad-user';
 
     integration.addMemory({ subject: '爸爸', content: '喜歡喝咖啡' });
     integration.addMemory({ subject: '爸爸', content: '喜歡吃牛肉麵' });
@@ -89,8 +89,8 @@ describe('Family Memory edit flow', () => {
   });
 
   it('clears pending state when another message arrives', () => {
+    const actorUserId = 'U59a66400a022a3ca71623a459b47ca56';
     const integration = createIntegration();
-    const actorUserId = 'dad-user';
 
     integration.addMemory({ subject: '爸爸', content: '喜歡咖啡' });
 
@@ -118,12 +118,20 @@ describe('Family Memory edit flow', () => {
 
     routeFamilyMemoryMessage(
       '阿福爸爸喜歡什麼',
-      { existingFunctionMatched: false, actorUserId: 'dad-user', integration },
+      {
+        existingFunctionMatched: false,
+        actorUserId: 'U59a66400a022a3ca71623a459b47ca56',
+        integration,
+      },
     );
 
     const otherActor = routeFamilyMemoryMessage(
       '取消 1',
-      { existingFunctionMatched: false, actorUserId: 'mom-user', integration },
+      {
+        existingFunctionMatched: false,
+        actorUserId: 'U9c98637a20f237e5d5ea41e146daa55f',
+        integration,
+      },
     );
 
     expect(otherActor.type).toBe('not_handled');
