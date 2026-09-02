@@ -152,5 +152,3 @@ test('沒有 Integration 時不得靜默執行 Memory', () => {
 
   assert(threw, '應明確要求 Integration');
 });
-
-console.log('Memory 2.0 Route Boundary 測試完成');
