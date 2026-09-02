@@ -139,6 +139,22 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     };
   }
 
+  const category = extractCategory(normalized);
+  const value = extractValue(normalized);
+  if (category && value !== undefined) {
+    return {
+      type: 'add_record',
+      input: {
+        subject: subject || '我',
+        category,
+        value,
+        ...(extractUnit(normalized)
+          ? { unit: extractUnit(normalized) }
+          : {}),
+      },
+    };
+  }
+
   if (!memoryCallNamePresent) {
     return { type: 'unknown', text: normalized };
   }
@@ -166,22 +182,6 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     return {
       type: 'trend',
       query: extractRecordQuery(normalized),
-    };
-  }
-
-  const category = extractCategory(normalized);
-  const value = extractValue(normalized);
-  if (category && value !== undefined && /^阿福[，,、]?\s*(請)?(幫我)?/u.test(normalized)) {
-    return {
-      type: 'add_record',
-      input: {
-        subject: subject || '我',
-        category,
-        value,
-        ...(extractUnit(normalized)
-          ? { unit: extractUnit(normalized) }
-          : {}),
-      },
     };
   }
 
