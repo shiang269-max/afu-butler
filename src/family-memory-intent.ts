@@ -85,7 +85,9 @@ function extractMemoryQuery(text: string): MemoryQuery {
     .trim();
 
   if (subject) {
-    keyword = keyword.replace(new RegExp(subject, 'g'), '').trim();
+    keyword = keyword
+      .replaceAll(subject, '')
+      .trim();
   }
 
   return {
