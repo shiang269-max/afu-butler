@@ -5,10 +5,7 @@ function formatRecordValue(
   unit: string | undefined,
   content: string | undefined,
 ): string {
-  if (value !== undefined) {
-    return `${value}${unit ? ` ${unit}` : ''}`;
-  }
-
+  if (value !== undefined) return `${value}${unit ? ` ${unit}` : ''}`;
   return content || '已記錄';
 }
 
@@ -45,7 +42,10 @@ export function buildFamilyMemoryResponse(
       return `已記住：${result.memory.subject}，${result.memory.content}`;
 
     case 'memories_found':
-      return `目前找到 ${result.memories.length} 筆記憶：\n${formatMemoryList(result)}`;
+      return `目前找到 ${result.memories.length} 筆記憶：\n${formatMemoryList(result)}\n\n下一句可用「取消 N」或「修改 N 為新內容」。`;
+
+    case 'memory_updated':
+      return `已修改：${result.memory.subject}，${result.memory.content}`;
 
     case 'memory_forgotten':
       return `已忘記：${result.memory.subject}，${result.memory.content}`;
@@ -57,9 +57,7 @@ export function buildFamilyMemoryResponse(
       return `目前找到 ${result.records.length} 筆生活紀錄：\n${formatRecordList(result)}`;
 
     case 'average':
-      if (result.result.average === null) {
-        return '目前沒有足夠的數值紀錄可以計算平均值。';
-      }
+      if (result.result.average === null) return '目前沒有足夠的數值紀錄可以計算平均值。';
       return `平均值：${result.result.average}${result.result.unit ? ` ${result.result.unit}` : ''}（共 ${result.result.count} 筆）`;
 
     case 'trend':
