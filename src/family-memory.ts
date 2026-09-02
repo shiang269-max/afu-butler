@@ -197,6 +197,8 @@ export class FamilyMemoryStore {
   }
 
   listMemories(query: MemoryQuery = {}): FamilyMemory[] {
+    this.refreshFromFile();
+
     const subject = query.subject
       ? normalize(query.subject)
       : '';
@@ -238,6 +240,8 @@ export class FamilyMemoryStore {
   }
 
   getMemory(id: string): FamilyMemory | null {
+    this.refreshFromFile();
+
     const memory = this.data.memories.find(
       (item) => item.id === id,
     );
@@ -337,6 +341,8 @@ export class FamilyMemoryStore {
   }
 
   listRecords(query: RecordQuery = {}): LifeRecord[] {
+    this.refreshFromFile();
+
     const subject = query.subject
       ? normalize(query.subject)
       : '';
@@ -463,6 +469,7 @@ export class FamilyMemoryStore {
   }
 
   clearAll(): void {
+    this.refreshFromFile();
     this.data = emptyFile();
     this.save();
   }
