@@ -1,12 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { resolveFamilyTitle } from './family-title-resolver';
 import { setActiveStyle } from './style-state';
 
 describe('family-title-resolver', () => {
-  it('宮廷 Style：主上應解析為爸爸', () => {
+  beforeEach(() => {
     setActiveStyle('palace');
+  });
 
+  afterEach(() => {
+    setActiveStyle('palace');
+  });
+
+  it('宮廷 Style：主上應解析為爸爸', () => {
     const target = resolveFamilyTitle('阿福主上喜歡什麼');
 
     expect(target?.member.identity).toBe('你本人');
@@ -14,8 +20,6 @@ describe('family-title-resolver', () => {
   });
 
   it('宮廷 Style：娘娘應解析為媽媽', () => {
-    setActiveStyle('palace');
-
     const target = resolveFamilyTitle('阿福娘娘喜歡什麼');
 
     expect(target?.member.identity).toBe('妻子');
@@ -40,8 +44,6 @@ describe('family-title-resolver', () => {
   });
 
   it('未知稱呼不得解析', () => {
-    setActiveStyle('palace');
-
     const target = resolveFamilyTitle('阿福王后喜歡什麼');
 
     expect(target).toBeNull();
