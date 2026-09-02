@@ -13,6 +13,10 @@ export default defineConfig({
 
     ],
 
+    setupFiles: [
+      'src/vitest.setup.ts',
+    ],
+
     exclude: [
       'src/family-memory.test.ts',
       'src/family-memory-v2.test.ts',
@@ -29,6 +33,7 @@ export default defineConfig({
       'src/family-memory-existing-function-guard.test.ts',
       'src/family-memory-route-boundary.test.ts',
       'src/family-memory-response.test.ts',
+      'src/family-memory-all.vitest.test.ts',
     ],
 
   },
