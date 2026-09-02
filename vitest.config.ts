@@ -9,7 +9,7 @@ export default defineConfig({
 
     include: [
 
-      'src/**/*.vitest.test.ts',
+      'src/**/*.test.ts',
 
     ],
 
