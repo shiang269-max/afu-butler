@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   FamilyMemoryStore,
-  FamilyMemory,
 } from './family-memory';
 import { FamilyMemoryIntegration } from './family-memory-integration';
 import { parseFamilyMemoryIntent } from './family-memory-intent';
@@ -73,11 +72,12 @@ try {
   });
 
   test('forget_memory 零筆時不得刪除', () => {
+    const before = integration.listMemories().length;
     const intent = parseFamilyMemoryIntent('忘記姐姐吃辣');
     const result = executeFamilyMemoryIntent(intent, integration);
 
     assert(result?.type === 'not_found', '應為 not_found');
-    assert(integration.listMemories().length === 3, '資料不應被誤刪');
+    assert(integration.listMemories().length === before, '資料不應被誤刪');
   });
 
   test('forget_memory 多筆命中時必須拒絕直接刪除', () => {
