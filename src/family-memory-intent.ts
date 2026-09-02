@@ -26,6 +26,10 @@ export type FamilyMemoryIntent =
       input: { id: string };
     }
   | {
+      type: 'cancel_pending_memories';
+      input: { ids: string[] };
+    }
+  | {
       type: 'add_record';
       input: {
         subject: string;
