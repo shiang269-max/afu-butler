@@ -27,6 +27,7 @@ test('查詢人物記憶可解析為 query_memory', () => {
   assert(intent.type === 'query_memory', '應為 query_memory');
   if (intent.type !== 'query_memory') return;
   assert(intent.query.subject === '爸爸', 'subject 應為爸爸');
+  assert(intent.query.keyword === undefined, '人物查詢不應重複帶入人物名稱 keyword');
 });
 
 test('忘記人物資訊可解析為 forget_memory', () => {
@@ -34,6 +35,7 @@ test('忘記人物資訊可解析為 forget_memory', () => {
   assert(intent.type === 'forget_memory', '應為 forget_memory');
   if (intent.type !== 'forget_memory') return;
   assert(intent.query.subject === '媽媽', 'subject 應為媽媽');
+  assert(intent.query.keyword === '喜歡無糖茶', 'forget 應保留真正的內容關鍵字');
 });
 
 test('生活數據可解析為 add_record', () => {
