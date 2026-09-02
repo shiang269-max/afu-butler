@@ -143,6 +143,14 @@ export function routeFamilyMemoryMessage(
   text: string,
   options: FamilyMemoryRouteOptions,
 ): FamilyMemoryRouteResult {
+  const pending = options.actorUserId
+    ? consumePendingFamilyMemory(options.actorUserId)
+    : null;
+
+  if (pending && options.existingFunctionMatched) {
+    return { type: 'skipped_existing_function' };
+  }
+
   if (options.existingFunctionMatched) {
     return { type: 'skipped_existing_function' };
   }
@@ -151,10 +159,6 @@ export function routeFamilyMemoryMessage(
   if (!integration) {
     throw new Error('執行 Family Memory 必須提供 Integration');
   }
-
-  const pending = options.actorUserId
-    ? consumePendingFamilyMemory(options.actorUserId)
-    : null;
 
   if (pending) {
     const pendingIntent = parsePendingMemoryAction(text, pending.memories);
