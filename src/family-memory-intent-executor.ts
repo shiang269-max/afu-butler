@@ -11,14 +11,12 @@ export type FamilyMemoryExecutionResult =
   | { type: 'memory_added'; memory: FamilyMemory }
   | { type: 'memories_found'; memories: FamilyMemory[] }
   | { type: 'memory_forgotten'; memory: FamilyMemory }
+  | { type: 'memory_updated'; memory: FamilyMemory }
   | { type: 'record_added'; record: LifeRecord }
   | { type: 'records_found'; records: LifeRecord[] }
   | { type: 'average'; result: AverageResult }
   | { type: 'trend'; result: TrendResult }
-  | {
-      type: 'ambiguous_forget';
-      memories: FamilyMemory[];
-    }
+  | { type: 'ambiguous_forget'; memories: FamilyMemory[] }
   | { type: 'not_found'; query: string };
 
 export function executeFamilyMemoryIntent(
@@ -47,28 +45,35 @@ export function executeFamilyMemoryIntent(
 
       if (memories.length !== 1) {
         return memories.length === 0
-          ? {
-              type: 'not_found',
-              query: JSON.stringify(intent.query),
-            }
-          : {
-              type: 'ambiguous_forget',
-              memories,
-            };
+          ? { type: 'not_found', query: JSON.stringify(intent.query) }
+          : { type: 'ambiguous_forget', memories };
       }
 
       const target = memories[0];
       if (!integration.forgetMemory(target.id)) {
-        return {
-          type: 'not_found',
-          query: JSON.stringify(intent.query),
-        };
+        return { type: 'not_found', query: JSON.stringify(intent.query) };
       }
 
-      return {
-        type: 'memory_forgotten',
-        memory: target,
-      };
+      return { type: 'memory_forgotten', memory: target };
+    }
+
+    case 'update_memory': {
+      const memory = integration.updateMemory(intent.input.id, {
+        content: intent.input.content,
+      });
+
+      return memory
+        ? { type: 'memory_updated', memory }
+        : { type: 'not_found', query: intent.input.id };
+    }
+
+    case 'cancel_pending_memory': {
+      const memory = integration.getMemory(intent.input.id);
+      if (!memory || !integration.forgetMemory(intent.input.id)) {
+        return { type: 'not_found', query: intent.input.id };
+      }
+
+      return { type: 'memory_forgotten', memory };
     }
 
     case 'add_record':
@@ -81,23 +86,14 @@ export function executeFamilyMemoryIntent(
       const records = integration.listRecords(intent.query);
       return records.length
         ? { type: 'records_found', records }
-        : {
-            type: 'not_found',
-            query: JSON.stringify(intent.query),
-          };
+        : { type: 'not_found', query: JSON.stringify(intent.query) };
     }
 
     case 'average':
-      return {
-        type: 'average',
-        result: integration.average(intent.query),
-      };
+      return { type: 'average', result: integration.average(intent.query) };
 
     case 'trend':
-      return {
-        type: 'trend',
-        result: integration.trend(intent.query),
-      };
+      return { type: 'trend', result: integration.trend(intent.query) };
 
     case 'unknown':
       return null;
