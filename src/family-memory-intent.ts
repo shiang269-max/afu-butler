@@ -171,14 +171,18 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     };
   }
 
-  if (/阿福[，,、]?\s*(請)?(幫我)?\s*(平均|平均值|平均多久|平均幾)/u.test(normalized)) {
+  const averageMatch = normalized.match(/^(?:阿福[，,、]?\s*)(?:請)?(?:幫我)?\s*(.*)$/u);
+  const averageText = averageMatch?.[1]?.trim() || '';
+  if (/^(平均|平均值|平均多久|平均幾)/u.test(averageText)) {
     return {
       type: 'average',
       query: extractRecordQuery(normalized),
     };
   }
 
-  if (/阿福[，,、]?\s*(請)?(幫我)?\s*(趨勢|趨勢如何|變化|變化如何|上升還是下降)/u.test(normalized)) {
+  const trendMatch = normalized.match(/^(?:阿福[，,、]?\s*)(?:請)?(?:幫我)?\s*(.*)$/u);
+  const trendText = trendMatch?.[1]?.trim() || '';
+  if (/^(趨勢|趨勢如何|變化|變化如何|上升還是下降)/u.test(trendText)) {
     return {
       type: 'trend',
       query: extractRecordQuery(normalized),
