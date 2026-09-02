@@ -8,7 +8,10 @@ import {
 } from './family-memory-intent';
 import { FamilyMemoryIntegration } from './family-memory-integration';
 import { resolveFamilyMemorySubject } from './family-memory-subject';
-import { resolveFamilyTitle } from './family-title-resolver';
+import {
+  resolveFamilyAlias,
+  resolveFamilyTitle,
+} from './family-title-resolver';
 import {
   consumePendingFamilyMemory,
   setPendingFamilyMemory,
@@ -29,8 +32,9 @@ export type FamilyMemoryRouteOptions = {
   integration?: FamilyMemoryIntegration;
 };
 
-function normalizeStyleFamilyTitle(text: string): string {
-  const target = resolveFamilyTitle(text);
+function normalizeFamilyReference(text: string): string {
+  const styleTarget = resolveFamilyTitle(text);
+  const target = styleTarget || resolveFamilyAlias(text);
   if (!target) return text;
 
   const primaryName = target.member.primaryNames[0] || target.member.identity;
@@ -45,8 +49,9 @@ function resolveActorSubject(
 ): FamilyMemoryIntent {
   const resolveSubject = (subject: string | undefined): string | undefined => {
     const styleTarget = resolveFamilyTitle(subject || '');
-    if (styleTarget) {
-      return styleTarget.member.primaryNames[0] || styleTarget.member.identity;
+    const aliasTarget = styleTarget || resolveFamilyAlias(subject || '');
+    if (aliasTarget) {
+      return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
     }
 
     return resolveFamilyMemorySubject(subject, actorUserId);
@@ -170,7 +175,7 @@ export function routeFamilyMemoryMessage(
     }
   }
 
-  const normalizedText = normalizeStyleFamilyTitle(text);
+  const normalizedText = normalizeFamilyReference(text);
   const parsedIntent = parseFamilyMemoryIntent(normalizedText);
 
   if (parsedIntent.type === 'unknown') {
