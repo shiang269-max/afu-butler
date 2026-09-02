@@ -9,14 +9,9 @@ export default defineConfig({
 
     include: [
 
-      'src/**/*.vitest.test.ts',
-      'src/family-memory-ai-context.test.ts',
-      'src/family-memory-intent.test.ts',
-      'src/family-memory-subject.test.ts',
+      'src/**/*.test.ts',
 
     ],
-
-    fileParallelism: false,
 
     setupFiles: [
       'src/vitest.setup.ts',
