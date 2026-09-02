@@ -30,6 +30,29 @@ export type FamilyMemoryRouteOptions = {
   integration?: FamilyMemoryIntegration;
 };
 
+function normalizeStyleFamilyTitle(
+  text: string,
+): string {
+  const target =
+    resolveFamilyTitle(text);
+
+  if (!target) {
+    return text;
+  }
+
+  const primaryName =
+    target.member.primaryNames[0]
+    || target.member.identity;
+
+  if (!primaryName) {
+    return text;
+  }
+
+  return text
+    .split(target.title)
+    .join(primaryName);
+}
+
 function resolveActorSubject(
   intent: FamilyMemoryIntent,
   actorUserId?: string,
@@ -117,7 +140,12 @@ export function routeFamilyMemoryMessage(
     return { type: 'skipped_existing_function' };
   }
 
-  const parsedIntent = parseFamilyMemoryIntent(text);
+  const normalizedText =
+    normalizeStyleFamilyTitle(text);
+
+  const parsedIntent =
+    parseFamilyMemoryIntent(normalizedText);
+
   if (parsedIntent.type === 'unknown') {
     return { type: 'not_handled', intent: parsedIntent };
   }
