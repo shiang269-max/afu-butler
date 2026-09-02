@@ -62,6 +62,7 @@ export type MemoryQuery = {
 export type RecordQuery = {
   subject?: string;
   category?: string;
+  unit?: string;
   from?: string;
   to?: string;
 };
@@ -106,6 +107,20 @@ function emptyFile(): MemoryFile {
     memories: [],
     records: [],
   };
+}
+
+function getRecordUnitKey(record: LifeRecord): string {
+  return record.unit ? normalize(record.unit) : '';
+}
+
+function assertConsistentUnits(records: LifeRecord[]): void {
+  const units = new Set(records.map(getRecordUnitKey));
+
+  if (units.size > 1) {
+    throw new Error(
+      '統計資料的 unit 不一致，無法直接計算平均值或趨勢',
+    );
+  }
 }
 
 export class FamilyMemoryStore {
@@ -316,6 +331,9 @@ export class FamilyMemoryStore {
     const category = query.category
       ? normalize(query.category)
       : '';
+    const unit = query.unit
+      ? normalize(query.unit)
+      : '';
 
     const from = query.from
       ? new Date(query.from).getTime()
@@ -337,6 +355,13 @@ export class FamilyMemoryStore {
           if (
             category &&
             normalize(record.category) !== category
+          ) {
+            return false;
+          }
+
+          if (
+            unit &&
+            getRecordUnitKey(record) !== unit
           ) {
             return false;
           }
@@ -369,17 +394,14 @@ export class FamilyMemoryStore {
       };
     }
 
+    assertConsistentUnits(records);
+
     const total = records.reduce(
       (sum, record) => sum + (record.value || 0),
       0,
     );
 
-    const units = records
-      .map((record) => record.unit)
-      .filter(Boolean);
-    const unit = units.length > 0
-      ? units[0]
-      : undefined;
+    const unit = records[0].unit;
 
     return {
       count: records.length,
@@ -402,6 +424,8 @@ export class FamilyMemoryStore {
         direction: '資料不足',
       };
     }
+
+    assertConsistentUnits(records);
 
     const first = records[0];
     const latest = records[records.length - 1];
