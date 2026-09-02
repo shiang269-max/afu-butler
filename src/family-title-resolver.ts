@@ -21,11 +21,7 @@ export interface FamilyTitleTarget {
  * Identity 仍由 FAMILY_MEMBERS 管理。
  * Style Language 只提供目前風格下的家庭成員稱呼。
  *
- * 本模組負責把：
- *
- *   「王后」／「船長」／「主上」...
- *
- * 解析回固定家庭身份。
+ * 本模組負責把目前 Style 的家庭稱呼解析回固定家庭身份。
  *
  * 注意：
  * - 唯一匹配才回傳
@@ -85,22 +81,18 @@ function findMemberByStyleName(
     }));
 }
 
-export function resolveFamilyTitle(
+function collectFamilyTitleCandidates(
   text: string,
-): FamilyTitleTarget | null {
+): Map<string, FamilyTitleTarget> {
   const normalized = text.trim();
+  const candidates = new Map<string, FamilyTitleTarget>();
 
   if (!normalized) {
-    return null;
+    return candidates;
   }
 
   const styleLanguage =
     getActiveStyleLanguage();
-
-  const candidates = new Map<
-    string,
-    FamilyTitleTarget
-  >();
 
   for (const entry of styleLanguage.familyTitles) {
     const normalizedEntry =
@@ -140,9 +132,24 @@ export function resolveFamilyTitle(
     }
   }
 
+  return candidates;
+}
+
+export function resolveFamilyTitle(
+  text: string,
+): FamilyTitleTarget | null {
+  const candidates =
+    collectFamilyTitleCandidates(text);
+
   if (candidates.size !== 1) {
     return null;
   }
 
   return [...candidates.values()][0];
+}
+
+export function hasKnownFamilyTitle(
+  text: string,
+): boolean {
+  return collectFamilyTitleCandidates(text).size > 0;
 }
