@@ -40,9 +40,30 @@ export type FamilyMemoryIntent =
       text: string;
     };
 
-const SUBJECTS = ['爸爸', '媽媽', '哥哥', '姐姐', '弟弟', '妹妹', '我'];
+const SUBJECTS = ['爸爸', '媽媽', '哥哥', '姐姐', '弟弟', '妹妹', '辰', '我'];
 
 const MEMORY_CALL_NAMES = ['阿福'];
+
+const MEMORY_QUERY_WORDS = [
+  '什麼',
+  '哪些',
+  '哪個',
+  '有沒有',
+  '嗎',
+  '喜歡',
+  '愛吃',
+  '愛喝',
+  '不吃',
+  '不喝',
+  '習慣',
+  '偏好',
+  '喜好',
+  '記憶',
+  '記得',
+  '事情',
+  '資料',
+  '資訊',
+];
 
 function hasMemoryCallName(text: string): boolean {
   return MEMORY_CALL_NAMES.some((callName) => text.includes(callName));
@@ -114,6 +135,15 @@ function extractRecordQuery(text: string): RecordQuery {
     ...(category ? { category } : {}),
     ...(unit ? { unit } : {}),
   };
+}
+
+function looksLikeNaturalMemoryQuery(text: string): boolean {
+  const hasSubject = Boolean(extractSubject(text));
+  const hasMemoryWord = MEMORY_QUERY_WORDS.some((word) =>
+    text.includes(word),
+  );
+
+  return hasSubject && hasMemoryWord;
 }
 
 export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
@@ -195,6 +225,13 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
       query: category
         ? extractRecordQuery(callBody)
         : extractMemoryQuery(callBody),
+    };
+  }
+
+  if (looksLikeNaturalMemoryQuery(callBody)) {
+    return {
+      type: 'query_memory',
+      query: extractMemoryQuery(callBody),
     };
   }
 
