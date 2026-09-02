@@ -164,6 +164,10 @@ export class FamilyMemoryStore {
     );
   }
 
+  private refreshFromFile(): void {
+    this.data = this.load();
+  }
+
   getFilePath(): string {
     return this.filePath;
   }
@@ -173,6 +177,8 @@ export class FamilyMemoryStore {
     content: string;
     tags?: string[];
   }): FamilyMemory {
+    this.refreshFromFile();
+
     const timestamp = nowIso();
     const memory: FamilyMemory = {
       id: createId('mem'),
@@ -247,6 +253,8 @@ export class FamilyMemoryStore {
       tags?: string[];
     },
   ): FamilyMemory | null {
+    this.refreshFromFile();
+
     const memory = this.data.memories.find(
       (item) => item.id === id,
     );
@@ -275,6 +283,8 @@ export class FamilyMemoryStore {
   }
 
   forgetMemory(id: string): boolean {
+    this.refreshFromFile();
+
     const index = this.data.memories.findIndex(
       (memory) => memory.id === id,
     );
@@ -296,6 +306,8 @@ export class FamilyMemoryStore {
     content?: string;
     occurredAt?: string | Date;
   }): LifeRecord {
+    this.refreshFromFile();
+
     const timestamp = nowIso();
     const occurredAt = input.occurredAt
       ? new Date(input.occurredAt).toISOString()
