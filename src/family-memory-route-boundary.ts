@@ -110,13 +110,28 @@ function parsePendingMemoryAction(
 ): FamilyMemoryIntent | null {
   const normalized = text.trim();
 
-  const cancelMatch = normalized.match(/^(?:取消|刪除)\s*(\d+)$/u);
+  const cancelMatch = normalized.match(
+    /^(?:取消|刪除)\s*(\d+(?:\s*(?:、|,|，|\s)\s*\d+)*)$/u,
+  );
   if (cancelMatch) {
-    const index = Number(cancelMatch[1]) - 1;
-    const memory = memories[index];
-    return memory
-      ? { type: 'cancel_pending_memory', input: { id: memory.id } }
-      : null;
+    const indexes = cancelMatch[1]
+      .match(/\d+/g)
+      ?.map((value) => Number(value) - 1) || [];
+
+    const targets = indexes.map((index) => memories[index]);
+    if (!indexes.length || targets.some((memory) => !memory)) return null;
+
+    if (targets.length === 1) {
+      return {
+        type: 'cancel_pending_memory',
+        input: { id: targets[0].id },
+      };
+    }
+
+    return {
+      type: 'cancel_pending_memories',
+      input: { ids: targets.map((memory) => memory.id) },
+    };
   }
 
   const updateMatch = normalized.match(
