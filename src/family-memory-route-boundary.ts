@@ -115,7 +115,7 @@ function parsePendingMemoryAction(
   }
 
   const updateMatch = normalized.match(
-    /^修改\s*(\d+)\s*(?:為|成|改成)\s*(.+)$/u,
+    /^修改\s*(\d+)\s*(?:(?:為|成|改成)\s*)?(.+)$/u,
   );
   if (updateMatch) {
     const index = Number(updateMatch[1]) - 1;
