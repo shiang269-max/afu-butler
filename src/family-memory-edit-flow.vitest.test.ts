@@ -88,6 +88,26 @@ describe('Family Memory edit flow', () => {
     }
   });
 
+  it('supports compact modify syntax without 為/成/改成', () => {
+    const actorUserId = 'U59a66400a022a3ca71623a459b47ca56';
+    const integration = createIntegration();
+
+    integration.addMemory({ subject: '爸爸', content: '喜歡吃飯' });
+
+    routeFamilyMemoryMessage(
+      '阿福爸爸喜歡什麼',
+      { existingFunctionMatched: false, actorUserId, integration },
+    );
+
+    const modified = routeFamilyMemoryMessage(
+      '修改1喜歡吃麵',
+      { existingFunctionMatched: false, actorUserId, integration },
+    );
+
+    expect(modified.type).toBe('executed');
+    expect(integration.listMemories()[0].content).toBe('喜歡吃麵');
+  });
+
   it('clears pending state when another message arrives', () => {
     const actorUserId = 'U59a66400a022a3ca71623a459b47ca56';
     const integration = createIntegration();
