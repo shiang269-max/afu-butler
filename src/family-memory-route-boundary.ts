@@ -7,6 +7,7 @@ import {
   parseFamilyMemoryIntent,
 } from './family-memory-intent';
 import { FamilyMemoryIntegration } from './family-memory-integration';
+import { resolveFamilyMemorySubject } from './family-memory-subject';
 
 export type FamilyMemoryRouteResult =
   | {
@@ -24,8 +25,74 @@ export type FamilyMemoryRouteResult =
 
 export type FamilyMemoryRouteOptions = {
   existingFunctionMatched: boolean;
+  actorUserId?: string;
   integration?: FamilyMemoryIntegration;
 };
+
+function resolveActorSubject(
+  intent: FamilyMemoryIntent,
+  actorUserId?: string,
+): FamilyMemoryIntent {
+  if (intent.type === 'add_memory') {
+    return {
+      ...intent,
+      input: {
+        ...intent.input,
+        subject: resolveFamilyMemorySubject(
+          intent.input.subject,
+          actorUserId,
+        ) || intent.input.subject,
+      },
+    };
+  }
+
+  if (intent.type === 'query_memory' || intent.type === 'forget_memory') {
+    return {
+      ...intent,
+      query: {
+        ...intent.query,
+        subject: resolveFamilyMemorySubject(
+          intent.query.subject,
+          actorUserId,
+        ),
+      },
+    };
+  }
+
+  if (
+    intent.type === 'add_record' ||
+    intent.type === 'list_records' ||
+    intent.type === 'average' ||
+    intent.type === 'trend'
+  ) {
+    if (intent.type === 'add_record') {
+      return {
+        ...intent,
+        input: {
+          ...intent.input,
+          subject:
+            resolveFamilyMemorySubject(
+              intent.input.subject,
+              actorUserId,
+            ) || intent.input.subject,
+        },
+      };
+    }
+
+    return {
+      ...intent,
+      query: {
+        ...intent.query,
+        subject: resolveFamilyMemorySubject(
+          intent.query.subject,
+          actorUserId,
+        ),
+      },
+    };
+  }
+
+  return intent;
+}
 
 /**
  * Family Memory 與既有總管功能之間的安全邊界。
@@ -42,10 +109,15 @@ export function routeFamilyMemoryMessage(
     return { type: 'skipped_existing_function' };
   }
 
-  const intent = parseFamilyMemoryIntent(text);
-  if (intent.type === 'unknown') {
-    return { type: 'not_handled', intent };
+  const parsedIntent = parseFamilyMemoryIntent(text);
+  if (parsedIntent.type === 'unknown') {
+    return { type: 'not_handled', intent: parsedIntent };
   }
+
+  const intent = resolveActorSubject(
+    parsedIntent,
+    options.actorUserId,
+  );
 
   const integration = options.integration;
   if (!integration) {
