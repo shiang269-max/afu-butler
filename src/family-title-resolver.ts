@@ -135,11 +135,57 @@ function collectFamilyTitleCandidates(
   return candidates;
 }
 
+function collectFamilyAliasCandidates(
+  text: string,
+): Map<string, FamilyTitleTarget> {
+  const normalized = text.trim();
+  const candidates = new Map<string, FamilyTitleTarget>();
+
+  if (!normalized) {
+    return candidates;
+  }
+
+  for (const [userId, member] of Object.entries(FAMILY_MEMBERS)) {
+    const names = [
+      member.identity,
+      member.mentionName,
+      ...member.primaryNames,
+      ...member.aliases,
+    ].filter(Boolean);
+
+    for (const name of names) {
+      if (!normalized.includes(name)) continue;
+
+      candidates.set(userId, {
+        userId,
+        member,
+        title: name,
+      });
+      break;
+    }
+  }
+
+  return candidates;
+}
+
 export function resolveFamilyTitle(
   text: string,
 ): FamilyTitleTarget | null {
   const candidates =
     collectFamilyTitleCandidates(text);
+
+  if (candidates.size !== 1) {
+    return null;
+  }
+
+  return [...candidates.values()][0];
+}
+
+export function resolveFamilyAlias(
+  text: string,
+): FamilyTitleTarget | null {
+  const candidates =
+    collectFamilyAliasCandidates(text);
 
   if (candidates.size !== 1) {
     return null;
