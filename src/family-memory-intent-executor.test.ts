@@ -41,7 +41,7 @@ try {
   });
 
   test('query_memory 透過 Integration 取得資料', () => {
-    const intent = parseFamilyMemoryIntent('幫我查爸爸的記憶');
+    const intent = parseFamilyMemoryIntent('阿福，幫我查爸爸的記憶');
     const result = executeFamilyMemoryIntent(intent, integration);
 
     assert(result?.type === 'memories_found', '應為 memories_found');
@@ -60,7 +60,7 @@ try {
     );
 
     const average = executeFamilyMemoryIntent(
-      parseFamilyMemoryIntent('爸爸平均體重'),
+      parseFamilyMemoryIntent('阿福，平均爸爸的體重'),
       integration,
     );
 
@@ -73,7 +73,7 @@ try {
 
   test('forget_memory 零筆時不得刪除', () => {
     const before = integration.listMemories().length;
-    const intent = parseFamilyMemoryIntent('忘記姐姐吃辣');
+    const intent = parseFamilyMemoryIntent('阿福，忘記姐姐吃辣');
     const result = executeFamilyMemoryIntent(intent, integration);
 
     assert(result?.type === 'not_found', '應為 not_found');
@@ -84,7 +84,7 @@ try {
     integration.addMemory({ subject: '媽媽', content: '喜歡茶' });
     integration.addMemory({ subject: '媽媽', content: '喜歡水果' });
 
-    const intent = parseFamilyMemoryIntent('忘記媽媽');
+    const intent = parseFamilyMemoryIntent('阿福，忘記媽媽');
     const result = executeFamilyMemoryIntent(intent, integration);
 
     assert(result?.type === 'ambiguous_forget', '應為 ambiguous_forget');
@@ -93,7 +93,7 @@ try {
 
   test('forget_memory 單筆命中才允許刪除', () => {
     const target = integration.addMemory({ subject: '哥哥', content: '不喝咖啡' });
-    const intent = parseFamilyMemoryIntent('忘記哥哥不喝咖啡');
+    const intent = parseFamilyMemoryIntent('阿福，忘記哥哥不喝咖啡');
     const result = executeFamilyMemoryIntent(intent, integration);
 
     assert(result?.type === 'memory_forgotten', '應為 memory_forgotten');
