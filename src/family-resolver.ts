@@ -5,6 +5,10 @@ import {
   FamilyMember,
 } from './family';
 
+import {
+  resolveFamilyTitle,
+} from './family-title-resolver';
+
 export interface FamilyTarget {
 
   userId: string;
@@ -16,11 +20,26 @@ export interface FamilyTarget {
 /**
  * 根據使用者自然語言，
  * 判斷他想找的是哪一位家庭成員。
+ *
+ * 已知的 Style 家庭稱呼優先使用 deterministic resolver；
+ * 無法由 Style 稱呼唯一判斷時，才交給 Gemini 處理一般家庭身份語意。
  */
 export async function resolveFamilyTarget(
   message: string,
   gemini: GoogleGenAI,
 ): Promise<FamilyTarget | null> {
+
+  const styleTarget =
+    resolveFamilyTitle(message);
+
+  if (styleTarget) {
+    return {
+      userId:
+        styleTarget.userId,
+      member:
+        styleTarget.member,
+    };
+  }
 
   const members =
     Object.entries(
