@@ -103,6 +103,18 @@ import {
   buildStyleResponse,
 } from './styles/style-response';
 
+import {
+  familyMemoryIntegration,
+} from './family-memory-integration';
+
+import {
+  routeFamilyMemoryMessage,
+} from './family-memory-route-boundary';
+
+import {
+  buildFamilyMemoryResponse,
+} from './family-memory-response';
+
 
 /**
  * =========================================================
@@ -964,6 +976,7 @@ app.post(
              * 之後如果使用者再次明確叫總管，仍會走主動 AI Core。
              * =====================================================
              */
+
 
             const observerTargetId =
               event.source.type === 'group'
@@ -2273,6 +2286,130 @@ app.post(
 
             /*
              * =====================================================
+             * Family Memory 2.0
+             * =====================================================
+             *
+             * 到這裡代表目前訊息尚未被：
+             *
+             * - Location
+             * - Style Switch
+             * - Function Help
+             * - Vote
+             * - Reminder
+             *
+             * 任何一個既有功能接手。
+             *
+             * 因此才允許 Family Memory 嘗試解析。
+             *
+             * Memory 若無法處理，必須保持 not_handled，
+             * 再由既有 Observer / 主動 AI Core 繼續。
+             * =====================================================
+             */
+
+            try {
+
+              const familyMemoryRoute =
+                routeFamilyMemoryMessage(
+                  userMessage,
+                  {
+                    existingFunctionMatched: false,
+                    integration:
+                      familyMemoryIntegration,
+                  },
+                );
+
+
+              if (
+                familyMemoryRoute.type === 'executed'
+              ) {
+
+                const familyMemoryReply =
+                  buildStyleResponse(
+                    buildFamilyMemoryResponse(
+                      familyMemoryRoute.result,
+                    ),
+                  );
+
+
+                await lineClient.replyMessage(
+                  {
+                    replyToken:
+                      event.replyToken,
+
+                    messages: [
+                      {
+                        type: 'text',
+
+                        text:
+                          familyMemoryReply.slice(
+                            0,
+                            5000,
+                          ),
+                      },
+                    ],
+                  },
+                );
+
+
+                addToMemory(
+                  conversationKey,
+                  'user',
+                  userMessage,
+                );
+
+
+                addToMemory(
+                  conversationKey,
+                  'assistant',
+                  familyMemoryReply,
+                );
+
+
+                return;
+
+              }
+
+            } catch (error) {
+
+              logError(
+                'Family Memory 處理失敗',
+                error,
+              );
+
+              try {
+
+                await lineClient.replyMessage(
+                  {
+                    replyToken:
+                      event.replyToken,
+
+                    messages: [
+                      {
+                        type: 'text',
+
+                        text:
+                          buildStyleResponse('總管暫時無法處理這道家庭記憶，請稍後再試。'),
+                      },
+                    ],
+                  },
+                );
+
+              } catch (fallbackError) {
+
+                logError(
+                  'Family Memory 備援回覆失敗',
+                  fallbackError,
+                );
+
+              }
+
+              return;
+
+            }
+
+
+            /*
+             * =====================================================
              * 沒有叫總管，也沒有明確家庭目標
              *
              * → 保留 Observer 原本流程
@@ -2559,9 +2696,7 @@ app.post(
                * 傳送 LINE 回覆
                * =====================================================
                *
-               * AI Core 只負責：
-               *
-               * Gemini → 回答
+               * AI Core 只負責產生文字。
                *
                * LINE mention：
                *
@@ -2817,20 +2952,13 @@ async function sendReminderReply(
 async function sendAiReply(
   replyToken: string,
   replyText: string,
-
-  familyTarget?:
+  familyTarget:
     | {
         type: 'all';
       }
     | {
         type: 'user';
-
         userId: string;
-
-        member: {
-          identity: string;
-          mentionName: string;
-        };
       }
     | null,
 ): Promise<void> {
@@ -2842,244 +2970,103 @@ async function sendAiReply(
     );
 
 
-  /*
-   * =========================================================
-   * @ALL
-   * =========================================================
-   */
+  if (!familyTarget) {
 
-  if (
-    familyTarget &&
-    familyTarget.type === 'all'
-  ) {
-
-    await lineClient.replyMessage(
-      {
-        replyToken,
-
-        messages: [
-          {
-            type: 'textV2',
-
-            text:
-              `{target} ${safeReply}`,
-
-            substitution: {
-              target: {
-                type: 'mention',
-
-                mentionee: {
-                  type: 'all',
-                },
-              },
-            },
-          },
-        ],
-      },
-    );
-
-
-    return;
-
-  }
-
-
-  /*
-   * =========================================================
-   * @單一家庭成員
-   * =========================================================
-   */
-
-  if (
-    familyTarget &&
-    familyTarget.type === 'user'
-  ) {
-
-    await lineClient.replyMessage(
-      {
-        replyToken,
-
-        messages: [
-          {
-            type: 'textV2',
-
-            text:
-              `{target} ${safeReply}`,
-
-            substitution: {
-              target: {
-                type: 'mention',
-
-                mentionee: {
-                  type: 'user',
-
-                  userId:
-                    familyTarget.userId,
-                },
-              },
-            },
-          },
-        ],
-      },
-    );
-
-
-    return;
-
-  }
-
-
-  /*
-   * =========================================================
-   * 一般文字回覆
-   * =========================================================
-   */
-
-  await lineClient.replyMessage(
-    {
+    await lineClient.replyMessage({
       replyToken,
 
       messages: [
         {
           type: 'text',
-
-          text:
-            replyText.slice(
-              0,
-              5000,
-            ),
+          text: safeReply,
         },
       ],
-    },
-  );
-
-}
+    });
 
 
-/**
- * =========================================================
- * 主動訊息產生器
- * =========================================================
- *
- * 固定晚安：
- * 直接使用指定內容。
- *
- * 冷場：
- * 交給 Gemini 生成一句短話。
- *
- * 這部分暫時維持原本設計。
- * ========================================================= */
-
-async function generateProactiveReply(
-  type:
-    | 'good-night'
-    | 'silence',
-): Promise<string> {
-
-  /*
-   * =========================================================
-   * 固定晚安
-   * =========================================================
-   */
-
-  if (
-    type === 'good-night'
-  ) {
-
-    return buildStyleResponse(
-      '諸位，夜深了，奴才先向各位道一聲晚安。' +
-      '若還有什麼吩咐，隨時喚奴才一聲便是。',
-    );
+    return;
 
   }
 
 
-  /*
-   * =========================================================
-   * 冷場主動訊息
-   * =========================================================
-   */
+  if (
+    familyTarget.type === 'all'
+  ) {
 
-  const response =
-    await gemini.models.generateContent(
+    await lineClient.replyMessage({
+      replyToken,
+
+      messages: [
+        {
+          type: 'textV2',
+
+          text:
+            `{target} ${safeReply}`,
+
+          substitution: {
+            target: {
+              type: 'mention',
+
+              mentionee: {
+                type: 'all',
+              },
+            },
+          },
+        },
+      ],
+    });
+
+
+    return;
+
+  }
+
+
+  await lineClient.replyMessage({
+    replyToken,
+
+    messages: [
       {
-        model:
-          'gemini-3.5-flash-lite',
+        type: 'textV2',
 
-        contents: `
-你現在是這個家庭的「大內總管」。
+        text:
+          `{target} ${safeReply}`,
 
-目前家庭群組已經連續一段時間沒有人說話。
+        substitution: {
+          target: {
+            type: 'mention',
 
-你現在要主動打破冷清。
+            mentionee: {
+              type: 'user',
 
-請只說一句自然、簡短、有總管性格的話。
-
-可以像是在宮門口主動探頭看看眾人是否還醒著，
-可以帶一點幽默、關心或宮廷感。
-
-不要提到：
-
-- 系統
-- 排程
-- 冷場
-- 三小時
-- 監控
-- 程式
-- AI
-
-不要說自己需要休息或要下線。
-
-不要假裝有人剛剛叫你。
-
-直接輸出要在家庭群組中說的那一句話。
-        `.trim(),
-
-        config: {
-          systemInstruction:
-            SYSTEM_INSTRUCTION,
+              userId:
+                familyTarget.userId,
+            },
+          },
         },
       },
-    );
-
-
-  return (
-    response.text?.trim() ||
-    buildStyleResponse('諸位都如此安靜，奴才倒有些不習慣了。')
-  );
-
+    ],
+  });
 }
 
 
 /**
  * =========================================================
- * 啟動
- * ========================================================= */
+ * Proactive Scheduler
+ * =========================================================
+ */
+
+startProactiveScheduler(
+  lineClient,
+);
+
 
 app.listen(
   PORT,
-
   () => {
 
     console.log(
-      `Server running on port ${PORT}`,
-    );
-
-
-    console.log(
-      'LINE第五個家人正在啟動',
-    );
-
-
-    /*
-     * =====================================================
-     * 啟動主動訊息排程器
-     * =====================================================
-     */
-
-    startProactiveScheduler(
-      lineClient,
-      generateProactiveReply,
+      `LINE第五個家人伺服器已啟動: ${PORT}`,
     );
 
   },
