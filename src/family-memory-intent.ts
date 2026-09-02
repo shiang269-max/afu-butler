@@ -88,6 +88,7 @@ function extractMemoryQuery(text: string): MemoryQuery {
     keyword = keyword
       .replace(new RegExp(subject, 'g'), '')
       .replace(/^[的之]\s*/u, '')
+      .replace(/^[、，,：:]\s*/u, '')
       .trim();
   }
 
@@ -134,7 +135,7 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
   if (/忘記|忘了|刪除記憶|不要記得/u.test(normalized)) {
     return {
       type: 'forget_memory',
-      query: extractMemoryQuery(normalized),
+      query: extractMemoryQuery(normalized.replace(/^(請)?(幫我)?(忘記|忘了|刪除記憶|不要記得)\s*/u, '')),
     };
   }
 
