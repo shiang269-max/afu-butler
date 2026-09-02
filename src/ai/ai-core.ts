@@ -1,41 +1,3 @@
-/**
- * =========================================================
- * AI Core
- * =========================================================
- *
- * 第五個家人的大腦入口。
- *
- * index.ts：
- * - 判斷是否交給第五個家人
- * - 建立 LINE / 家庭 Context
- *
- * AI Core：
- * - 接收完整 Context
- * - 建立 AI 指令
- * - 載入目前啟用的角色 Style
- * - 判斷是否需要即時資訊
- * - 必要時使用 Google Search
- * - 透過 Gemini API Manager 呼叫 Gemini
- * - 回傳最終回答
- *
- * AI Core 不負責：
- * - LINE replyMessage
- * - LINE pushMessage
- * - @人
- * - 記憶寫入
- * - Observer
- * - 家庭目標解析
- *
- * 這些由其他模組處理。
- *
- * Gemini API Manager 負責：
- * - API Key 管理
- * - Key 額度／限流／授權異常判斷
- * - 自動切換可用 Key
- *
- * =========================================================
- */
-
 import {
   SYSTEM_INSTRUCTION,
 } from '../persona';
@@ -43,6 +5,14 @@ import {
 import {
   getActiveStylePrompt,
 } from '../styles/style-language';
+
+import {
+  buildFamilyMemoryAiContext,
+} from '../family-memory-ai-context';
+
+import {
+  familyMemoryIntegration,
+} from '../family-memory-integration';
 
 import {
   AiContext,
@@ -53,394 +23,49 @@ import {
   geminiApiManager as defaultGeminiApiManager,
 } from './gemini-api-manager';
 
-
-/**
- * =========================================================
- * Gemini 模型
- * =========================================================
- */
-
-const DEFAULT_MODEL =
-  'gemini-3.5-flash-lite';
-
-
-/**
- * =========================================================
- * AI Core 結果
- * =========================================================
- */
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 
 export interface AiCoreResult {
-
-  /**
-   * Gemini 最終文字。
-   */
-
   text: string;
-
-
-  /**
-   * 實際使用模型。
-   */
-
   model: string;
-
 }
-
-
-/**
- * =========================================================
- * AI Core 輸入
- * =========================================================
- */
 
 export interface AiCoreInput {
-
-  /**
-   * Gemini API Manager。
-   *
-   * 由 index.ts 傳入目前正式使用的 Manager。
-   *
-   * Manager 會在真正呼叫 Gemini 時：
-   *
-   * Primary
-   * ↓
-   * 發生 Key / 額度 / 限流 / 授權類錯誤
-   * ↓
-   * 自動切換 Backup
-   *
-   * 若未傳入，則使用預設的全域 Manager。
-   */
-
-  geminiApiManager?:
-    typeof defaultGeminiApiManager;
-
-
-  /**
-   * 完整 LINE / 家庭 Context。
-   */
-
-  context:
-    AiContext;
-
-
-  /**
-   * 可選模型。
-   */
-
-  model?:
-    string;
-
+  geminiApiManager?: typeof defaultGeminiApiManager;
+  context: AiContext;
+  model?: string;
 }
 
-
-/**
- * =========================================================
- * 判斷是否可能需要即時資訊
- * =========================================================
- *
- * 不要每一則訊息都開 Google Search。
- *
- * 只有明顯涉及：
- *
- * - 現在 / 今天 / 最近
- * - 新聞 / 最新消息
- * - 天氣
- * - 價格
- * - 營業時間
- * - 地點 / 餐廳 / 附近
- * - 網路查詢
- * - 即時資料
- *
- * 才把 Google Search 工具交給 Gemini。
- *
- * 目前 Google Search Grounding 暫停使用，
- * buildGoogleSearchTools() 維持空陣列。
- *
- * 這個判斷函式先保留，
- * 供未來 Node.js Action / Search 功能恢復時使用。
- *
- * =========================================================
- */
-
-function mayNeedGoogleSearch(
-  message: string,
-): boolean {
-
-  const text =
-    message
-      .trim()
-      .toLowerCase();
-
-
-  if (
-    !text
-  ) {
-
-    return false;
-
-  }
-
-
+function mayNeedGoogleSearch(message: string): boolean {
+  const text = message.trim().toLowerCase();
+  if (!text) return false;
   const realtimePatterns = [
-
-    /現在/,
-
-    /目前/,
-
-    /今天/,
-
-    /今日/,
-
-    /今晚/,
-
-    /明天/,
-
-    /昨天/,
-
-    /最近/,
-
-    /最新/,
-
-    /即時/,
-
-    /新聞/,
-
-    /消息/,
-
-    /發生什麼/,
-
-    /發生甚麼/,
-
-    /天氣/,
-
-    /下雨/,
-
-    /溫度/,
-
-    /氣溫/,
-
-    /價格/,
-
-    /多少錢/,
-
-    /股價/,
-
-    /匯率/,
-
-    /營業時間/,
-
-    /幾點開/,
-
-    /幾點關/,
-
-    /有沒有開/,
-
-    /地址/,
-
-    /在哪裡/,
-
-    /在哪/,
-
-    /附近/,
-
-    /餐廳/,
-
-    /咖啡/,
-
-    /商店/,
-
-    /店家/,
-
-    /推薦/,
-
-    /搜尋/,
-
-    /查一下/,
-
-    /查查看/,
-
-    /幫我查/,
-
-    /網路上/,
-
-    /網路/,
-
-    /google/,
-
-    /where/,
-
-    /nearby/,
-
-    /restaurant/,
-
-    /weather/,
-
-    /latest/,
-
-    /news/,
-
-    /price/,
-
-    /open now/,
-
+    /現在/, /目前/, /今天/, /今日/, /今晚/, /明天/, /昨天/, /最近/, /最新/, /即時/,
+    /新聞/, /消息/, /發生什麼/, /發生甚麼/, /天氣/, /下雨/, /溫度/, /氣溫/, /價格/,
+    /多少錢/, /股價/, /匯率/, /營業時間/, /幾點開/, /幾點關/, /有沒有開/, /地址/,
+    /在哪裡/, /在哪/, /附近/, /餐廳/, /咖啡/, /商店/, /店家/, /推薦/, /搜尋/, /查一下/,
+    /查查看/, /幫我查/, /網路上/, /網路/, /google/, /where/, /nearby/, /restaurant/,
+    /weather/, /latest/, /news/, /price/, /open now/,
   ];
-
-
-  return realtimePatterns.some(
-    (
-      pattern,
-    ) =>
-      pattern.test(
-        text,
-      ),
-  );
-
+  return realtimePatterns.some((pattern) => pattern.test(text));
 }
 
-
-/**
- * =========================================================
- * 建立搜尋工具
- * =========================================================
- *
- * Google Search Grounding 目前暫停。
- *
- * 不在這裡直接呼叫 Google Search，
- * 避免再次造成目前已確認的 429 問題。
- *
- * 未來若恢復搜尋，
- * 應優先透過獨立 Node.js Action / Tool Layer，
- * 而不是把 Search 直接重新塞回 AI Core。
- *
- * =========================================================
- */
-
-function buildGoogleSearchTools(
-  currentMessage: string,
-):
-  Array<Record<string, unknown>> {
-
+function buildGoogleSearchTools(currentMessage: string): Array<Record<string, unknown>> {
   void currentMessage;
-
   void mayNeedGoogleSearch;
-
-
   return [];
-
 }
 
-
-/**
- * =========================================================
- * 建立目前時間
- * =========================================================
- *
- * 如果 index / Context 已經提供時間，
- * 優先使用 Context。
- *
- * 如果沒有，
- * AI Core 自己補上台灣目前時間，
- * 避免模型自行猜測。
- *
- * =========================================================
- */
-
-function getEffectiveCurrentTime(
-  context: AiContext,
-): string {
-
-  if (
-    context.currentTime &&
-    context.currentTime.trim()
-  ) {
-
-    return context.currentTime.trim();
-
-  }
-
-
-  const now =
-    new Date();
-
-
-  return new Intl.DateTimeFormat(
-    'zh-TW',
-    {
-      timeZone:
-        'Asia/Taipei',
-
-      year:
-        'numeric',
-
-      month:
-        '2-digit',
-
-      day:
-        '2-digit',
-
-      weekday:
-        'long',
-
-      hour:
-        '2-digit',
-
-      minute:
-        '2-digit',
-
-      second:
-        '2-digit',
-
-      hour12:
-        false,
-    },
-  ).format(
-    now,
-  );
-
+function getEffectiveCurrentTime(context: AiContext): string {
+  if (context.currentTime && context.currentTime.trim()) return context.currentTime.trim();
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(new Date());
 }
-
-
-/**
- * =========================================================
- * 建立第五個家人核心身份
- * =========================================================
- *
- * 重要：
- *
- * 這裡不直接寫死：
- *
- * - 大內總管
- * - 管家
- * - 舵手
- * - 精靈
- * - 艦橋 AI
- * - 傳令兵
- *
- * 目前實際角色身份、
- * 人格、
- * 說話方式、
- * 世界觀、
- * 位階關係，
- * 全部由：
- *
- * - src/persona.ts
- * - src/styles/style-language.ts
- *
- * 共同提供。
- *
- * AI Core 只負責把目前啟用的 Style
- * 正確整合進 AI 指令，
- * 不自行覆蓋或固定某一種風格。
- *
- * =========================================================
- */
 
 function buildAiCoreInstruction(): string {
-
-  const stylePrompt =
-    getActiveStylePrompt();
-
+  const stylePrompt = getActiveStylePrompt();
 
   return `
 你是這個家庭在 LINE 裡的第五個家人。
@@ -738,76 +363,24 @@ Context 中的「家庭位置」
 
 直接處理目前訊息。
 `.trim();
-
 }
 
+export async function runAiCore(input: AiCoreInput): Promise<AiCoreResult> {
+  const { context } = input;
+  const model = input.model ?? DEFAULT_MODEL;
+  const apiManager = input.geminiApiManager ?? defaultGeminiApiManager;
 
-/**
- * =========================================================
- * 執行 AI Core
- * =========================================================
- */
+  const contextPrompt = buildAiContextPrompt({
+    ...context,
+    currentTime: getEffectiveCurrentTime(context),
+  });
 
-export async function runAiCore(
-  input: AiCoreInput,
-):
-  Promise<AiCoreResult> {
+  const familyMemoryPrompt = buildFamilyMemoryAiContext(familyMemoryIntegration);
 
-  const {
-    context,
-  } = input;
+  const googleSearchTools = buildGoogleSearchTools(context.currentMessage);
 
-
-  const model =
-    input.model ??
-    DEFAULT_MODEL;
-
-
-  const apiManager =
-    input.geminiApiManager ??
-    defaultGeminiApiManager;
-
-
-  /*
-   * =======================================================
-   * 建立 Context
-   * =======================================================
-   */
-
-  const contextPrompt =
-    buildAiContextPrompt(
-      {
-        ...context,
-
-        currentTime:
-          getEffectiveCurrentTime(
-            context,
-          ),
-      },
-    );
-
-
-  /*
-   * =======================================================
-   * 判斷是否需要 Google Search
-   * =======================================================
-   */
-
-  const googleSearchTools =
-    buildGoogleSearchTools(
-      context.currentMessage,
-    );
-
-
-  /*
-   * =======================================================
-   * 建立工具說明
-   * =======================================================
-   */
-
-  const toolInstruction =
-    googleSearchTools.length > 0
-      ? `
+  const toolInstruction = googleSearchTools.length > 0
+    ? `
 【即時資訊工具】
 
 目前這則訊息可能需要即時或外部資訊。
@@ -820,7 +393,7 @@ export async function runAiCore(
 
 不要為了一般知識或普通聊天而搜尋。
 `.trim()
-      : `
+    : `
 【即時資訊工具】
 
 目前沒有必要使用即時搜尋。
@@ -829,17 +402,13 @@ export async function runAiCore(
 直接使用你的正常 AI 能力回答。
 `.trim();
 
-
-  /*
-   * =======================================================
-   * 建立 AI Prompt
-   * =======================================================
-   */
-
   const prompt = `
 【LINE / 家庭 Context】
 
 ${contextPrompt}
+
+
+${familyMemoryPrompt}
 
 
 【第五個家人核心身份】
@@ -859,11 +428,15 @@ ${toolInstruction}
 3. 最近對話
 4. 家庭已知位置
 5. 目前時間
-6. 本次訊息
-7. 使用者真正想表達的意思
-8. 目前啟用的角色 Style
+6. 家庭長期記憶與生活紀錄
+7. 本次訊息
+8. 使用者真正想表達的意思
+9. 目前啟用的角色 Style
 
 再回答。
+
+家庭長期記憶與生活紀錄是已保存的家庭資料，可以在相關問題中自然使用。
+不要把記憶資料誤認為本次使用者訊息，也不要自行新增、修改或刪除記憶。
 
 不要只依靠固定關鍵字。
 
@@ -908,119 +481,25 @@ ${toolInstruction}
 請直接回答目前訊息。
 `.trim();
 
+  console.log('[AI Core Debug] 開始呼叫 Gemini');
 
-  /*
-   * =======================================================
-   * Gemini
-   * =======================================================
-   *
-   * 重要：
-   *
-   * AI Core 不再直接持有固定 Gemini Client。
-   *
-   * 所有真正的 Gemini 呼叫都交給：
-   *
-   * geminiApiManager.execute()
-   *
-   * Manager 負責：
-   *
-   * Primary
-   * ↓
-   * Key / 額度 / 限流 / 授權異常
-   * ↓
-   * 暫時標記
-   * ↓
-   * Backup
-   *
-   * 因此這裡不需要自行判斷 429。
-   *
-   * SYSTEM_INSTRUCTION 提供人格核心。
-   *
-   * 目前實際 Style
-   * 由 buildAiCoreInstruction()
-   * 與 getActiveStylePrompt()
-   * 動態套用。
-   *
-   * =======================================================
-   */
-
-  console.log(
-    '[AI Core Debug] 開始呼叫 Gemini',
-  );
-
-
-  const response =
-    await apiManager.execute(
-      async (
-        gemini,
-      ) => {
-
-        return gemini.models.generateContent(
-          {
-            model,
-
-            contents:
-              prompt,
-
-            config: {
-              systemInstruction:
-                SYSTEM_INSTRUCTION,
-
-              ...(
-                googleSearchTools.length > 0
-                  ? {
-                      tools:
-                        googleSearchTools,
-                    }
-                  : {}
-              ),
-            },
-          },
-        );
-
-      },
-    );
-
-
-  console.log(
-    '[AI Core Debug] Gemini 已返回',
-  );
-
-
-  /*
-   * =======================================================
-   * 取得回答
-   * =======================================================
-   */
-
-  const text =
-    response.text?.trim();
-
-
-  /*
-   * =======================================================
-   * 空回答保護
-   * =======================================================
-   */
-
-  if (
-    !text
-  ) {
-
-    return {
-      text:
-        '我一時沒理清思緒，再問我一次。',
-
+  const response = await apiManager.execute(async (gemini) => {
+    return gemini.models.generateContent({
       model,
-    };
+      contents: prompt,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        ...(googleSearchTools.length > 0 ? { tools: googleSearchTools } : {}),
+      },
+    });
+  });
 
+  console.log('[AI Core Debug] Gemini 已返回');
+
+  const text = response.text?.trim();
+  if (!text) {
+    return { text: '我一時沒理清思緒，再問我一次。', model };
   }
 
-
-  return {
-    text,
-
-    model,
-  };
-
+  return { text, model };
 }
