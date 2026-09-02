@@ -42,13 +42,18 @@ export function buildFamilyMemoryResponse(
       return `已記住：${result.memory.subject}，${result.memory.content}`;
 
     case 'memories_found':
-      return `目前找到 ${result.memories.length} 筆記憶：\n${formatMemoryList(result)}\n\n下一句可用「取消 N」或「修改 N 為新內容」。`;
+      return `目前找到 ${result.memories.length} 筆記憶：\n${formatMemoryList(result)}\n\n下一句可用「取消 N」、「取消 N、N、N」或「修改 N 為新內容」。`;
 
     case 'memory_updated':
       return `已修改：${result.memory.subject}，${result.memory.content}`;
 
     case 'memory_forgotten':
       return `已忘記：${result.memory.subject}，${result.memory.content}`;
+
+    case 'memories_forgotten':
+      return `已取消 ${result.memories.length} 筆記憶：\n${result.memories
+        .map((memory) => `- ${memory.subject}：${memory.content}`)
+        .join('\n')}`;
 
     case 'record_added':
       return `已記錄：${result.record.subject}｜${result.record.category}：${formatRecordValue(result.record.value, result.record.unit, result.record.content)}`;
