@@ -6,74 +6,57 @@ import {
 } from './family';
 
 import {
+  hasKnownFamilyTitle,
   resolveFamilyTitle,
 } from './family-title-resolver';
 
 export interface FamilyTarget {
-
   userId: string;
-
   member: FamilyMember;
-
 }
 
 /**
- * 根據使用者自然語言，
- * 判斷他想找的是哪一位家庭成員。
+ * 根據使用者自然語言，判斷他想找的是哪一位家庭成員。
  *
- * 已知的 Style 家庭稱呼優先使用 deterministic resolver；
- * 無法由 Style 稱呼唯一判斷時，才交給 Gemini 處理一般家庭身份語意。
+ * 已知的 Style 家庭稱呼優先使用 deterministic resolver。
+ * 如果訊息包含目前 Style 的家庭稱呼但無法唯一判斷，
+ * 必須直接回傳 null，不交給 Gemini 猜測。
  */
 export async function resolveFamilyTarget(
   message: string,
   gemini: GoogleGenAI,
 ): Promise<FamilyTarget | null> {
-
-  const styleTarget =
-    resolveFamilyTitle(message);
+  const styleTarget = resolveFamilyTitle(message);
 
   if (styleTarget) {
     return {
-      userId:
-        styleTarget.userId,
-      member:
-        styleTarget.member,
+      userId: styleTarget.userId,
+      member: styleTarget.member,
     };
   }
 
-  const members =
-    Object.entries(
-      FAMILY_MEMBERS,
-    ).map(
-      ([userId, member]) => ({
-        userId,
-        identity:
-          member.identity,
-        aliases:
-          member.aliases,
-        role:
-          member.role,
-      }),
-    );
+  if (hasKnownFamilyTitle(message)) {
+    return null;
+  }
 
+  const members = Object.entries(FAMILY_MEMBERS).map(
+    ([userId, member]) => ({
+      userId,
+      identity: member.identity,
+      aliases: member.aliases,
+      role: member.role,
+    }),
+  );
 
-  const response =
-    await gemini.models.generateContent({
-
-      model:
-        'gemini-3.5-flash-lite',
-
-      contents: `
+  const response = await gemini.models.generateContent({
+    model: 'gemini-3.5-flash-lite',
+    contents: `
 你是家庭成員辨識器。
 
 請判斷使用者這句話想找哪一位家庭成員。
 
 家庭成員：
-${JSON.stringify(
-  members,
-  null,
-  2,
-)}
+${JSON.stringify(members, null, 2)}
 
 使用者訊息：
 ${message}
@@ -91,55 +74,26 @@ ${message}
 10. 只輸出對應的 userId。
 11. 找不到時只輸出 null。
 `,
+    config: {
+      temperature: 0,
+    },
+  });
 
-      config: {
-        temperature:
-          0,
-      },
+  const result = response.text?.trim();
 
-    });
-
-
-  const result =
-    response.text?.trim();
-
-
-  if (
-    !result ||
-    result === 'null'
-  ) {
-
+  if (!result || result === 'null') {
     return null;
-
   }
 
-
-  const userId =
-    result.replace(
-      /[`"'\\s]/g,
-      '',
-    );
-
-
-  const member =
-    FAMILY_MEMBERS[
-      userId
-    ];
-
+  const userId = result.replace(/[`"'\\s]/g, '');
+  const member = FAMILY_MEMBERS[userId];
 
   if (!member) {
-
     return null;
-
   }
 
-
   return {
-
     userId,
-
     member,
-
   };
-
 }
