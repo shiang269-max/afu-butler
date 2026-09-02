@@ -84,9 +84,13 @@ function extractMemoryQuery(text: string): MemoryQuery {
     .replace(/(記憶|記得|事情|資料|資訊)/g, '')
     .trim();
 
+  const normalizedKeyword = subject && keyword === subject
+    ? ''
+    : keyword;
+
   return {
     ...(subject ? { subject } : {}),
-    ...(keyword && keyword !== subject ? { keyword } : {}),
+    ...(normalizedKeyword ? { keyword: normalizedKeyword } : {}),
   };
 }
 
