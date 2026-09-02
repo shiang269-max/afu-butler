@@ -159,10 +159,14 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     return { type: 'unknown', text: normalized };
   }
 
-  if (/阿福[，,、]?\s*(請)?(幫我)?\s*(忘記|忘了|刪除記憶|不要記得)/u.test(normalized)) {
-    const queryText = normalized
-      .replace(/^阿福[，,、]?\s*/u, '')
-      .replace(/^(請)?(幫我)?(忘記|忘了|刪除記憶|不要記得)\s*/u, '')
+  const callBody = normalized
+    .replace(/^阿福[，,、]?\s*/u, '')
+    .replace(/^(請)?(幫我)?\s*/u, '')
+    .trim();
+
+  if (/^(忘記|忘了|刪除記憶|不要記得)/u.test(callBody)) {
+    const queryText = callBody
+      .replace(/^(忘記|忘了|刪除記憶|不要記得)\s*/u, '')
       .trim();
 
     return {
@@ -171,25 +175,21 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     };
   }
 
-  const averageMatch = normalized.match(/^(?:阿福[，,、]?\s*)(?:請)?(?:幫我)?\s*(.*)$/u);
-  const averageText = averageMatch?.[1]?.trim() || '';
-  if (/^(平均|平均值|平均多久|平均幾)/u.test(averageText)) {
+  if (/^(平均|平均值|平均多久|平均幾)/u.test(callBody)) {
     return {
       type: 'average',
       query: extractRecordQuery(normalized),
     };
   }
 
-  const trendMatch = normalized.match(/^(?:阿福[，,、]?\s*)(?:請)?(?:幫我)?\s*(.*)$/u);
-  const trendText = trendMatch?.[1]?.trim() || '';
-  if (/^(趨勢|趨勢如何|變化|變化如何|上升還是下降)/u.test(trendText)) {
+  if (/^(趨勢|趨勢如何|變化|變化如何|上升還是下降)/u.test(callBody)) {
     return {
       type: 'trend',
       query: extractRecordQuery(normalized),
     };
   }
 
-  if (/阿福[，,、]?\s*(請)?(幫我)?\s*(查|找|搜尋|看看|列出|有哪些|有沒有)/u.test(normalized)) {
+  if (/^(查|找|搜尋|看看|列出|有哪些|有沒有)/u.test(callBody)) {
     return {
       type: category ? 'list_records' : 'query_memory',
       query: category
