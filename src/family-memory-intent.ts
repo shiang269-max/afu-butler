@@ -42,6 +42,12 @@ export type FamilyMemoryIntent =
 
 const SUBJECTS = ['爸爸', '媽媽', '哥哥', '姐姐', '弟弟', '妹妹', '我'];
 
+const MEMORY_CALL_NAMES = ['阿福'];
+
+function hasMemoryCallName(text: string): boolean {
+  return MEMORY_CALL_NAMES.some((callName) => text.includes(callName));
+}
+
 function extractSubject(text: string): string | undefined {
   return SUBJECTS.find((subject) => text.includes(subject));
 }
@@ -67,7 +73,7 @@ function extractCategory(text: string): string | undefined {
 
 function extractContentAfterSubject(text: string, subject?: string): string {
   let content = text
-    .replace(/^(請)?(幫我)?(記住|記得|記下|保存|存下)\s*/u, '')
+    .replace(/^(阿福[，,、]?\s*)?(請)?(幫我)?(記住|記得|記下|保存|存下)\s*/u, '')
     .trim();
 
   if (subject && content.startsWith(subject)) {
@@ -80,7 +86,7 @@ function extractContentAfterSubject(text: string, subject?: string): string {
 function extractMemoryQuery(text: string): MemoryQuery {
   const subject = extractSubject(text);
   let keyword = text
-    .replace(/^(請)?(幫我)?(查|找|搜尋|看看|列出|告訴我)\s*/u, '')
+    .replace(/^(阿福[，,、]?\s*)?(請)?(幫我)?(查|找|搜尋|看看|列出|告訴我)\s*/u, '')
     .replace(/(記憶|記得|事情|資料|資訊)/g, '')
     .trim();
 
@@ -118,8 +124,9 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
   }
 
   const subject = extractSubject(normalized);
+  const memoryCallNamePresent = hasMemoryCallName(normalized);
 
-  if (/^(請)?(幫我)?(記住|記得|記下|保存|存下)/u.test(normalized)) {
+  if (/^(阿福[，,、]?\s*)?(請)?(幫我)?(記住|記得|記下|保存|存下)/u.test(normalized)) {
     const content = extractContentAfterSubject(normalized, subject);
     if (!content) return { type: 'unknown', text: normalized };
 
@@ -132,21 +139,30 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     };
   }
 
-  if (/忘記|忘了|刪除記憶|不要記得/u.test(normalized)) {
+  if (!memoryCallNamePresent) {
+    return { type: 'unknown', text: normalized };
+  }
+
+  if (/阿福[，,、]?\s*(請)?(幫我)?\s*(忘記|忘了|刪除記憶|不要記得)/u.test(normalized)) {
+    const queryText = normalized
+      .replace(/^阿福[，,、]?\s*/u, '')
+      .replace(/^(請)?(幫我)?(忘記|忘了|刪除記憶|不要記得)\s*/u, '')
+      .trim();
+
     return {
       type: 'forget_memory',
-      query: extractMemoryQuery(normalized.replace(/^(請)?(幫我)?(忘記|忘了|刪除記憶|不要記得)\s*/u, '')),
+      query: extractMemoryQuery(queryText),
     };
   }
 
-  if (/平均|平均值|平均多久|平均幾/u.test(normalized)) {
+  if (/阿福[，,、]?\s*(請)?(幫我)?\s*(平均|平均值|平均多久|平均幾)/u.test(normalized)) {
     return {
       type: 'average',
       query: extractRecordQuery(normalized),
     };
   }
 
-  if (/趨勢|趨勢如何|變化|變化如何|上升還是下降/u.test(normalized)) {
+  if (/阿福[，,、]?\s*(請)?(幫我)?\s*(趨勢|趨勢如何|變化|變化如何|上升還是下降)/u.test(normalized)) {
     return {
       type: 'trend',
       query: extractRecordQuery(normalized),
@@ -155,7 +171,7 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
 
   const category = extractCategory(normalized);
   const value = extractValue(normalized);
-  if (category && value !== undefined) {
+  if (category && value !== undefined && /^阿福[，,、]?\s*(請)?(幫我)?/u.test(normalized)) {
     return {
       type: 'add_record',
       input: {
@@ -169,7 +185,7 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     };
   }
 
-  if (/查|找|搜尋|看看|列出|有哪些|有沒有/u.test(normalized)) {
+  if (/阿福[，,、]?\s*(請)?(幫我)?\s*(查|找|搜尋|看看|列出|有哪些|有沒有)/u.test(normalized)) {
     return {
       type: category ? 'list_records' : 'query_memory',
       query: category
