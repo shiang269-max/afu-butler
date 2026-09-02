@@ -1,119 +1,97 @@
+import { describe, expect, it } from 'vitest';
 import { parseFamilyMemoryIntent } from './family-memory-intent';
 
-function assert(condition: unknown, message: string): void {
-  if (!condition) throw new Error(message);
-}
+describe('Memory 2.0 Intent 呼叫詞防誤觸', () => {
+  it('記住家庭資訊可解析為 add_memory', () => {
+    const intent = parseFamilyMemoryIntent('記住爸爸不吃香菜');
+    expect(intent.type).toBe('add_memory');
+    if (intent.type !== 'add_memory') return;
+    expect(intent.input.subject).toBe('爸爸');
+    expect(intent.input.content).toBe('不吃香菜');
+  });
 
-function test(name: string, run: () => void): void {
-  try {
-    run();
-    console.log(`PASS ${name}`);
-  } catch (error) {
-    console.error(`FAIL ${name}`);
-    throw error;
-  }
-}
+  it('阿福查詢人物記憶可解析為 query_memory', () => {
+    const intent = parseFamilyMemoryIntent('阿福，幫我查爸爸的記憶');
+    expect(intent.type).toBe('query_memory');
+    if (intent.type !== 'query_memory') return;
+    expect(intent.query.subject).toBe('爸爸');
+    expect(intent.query.keyword).toBeUndefined();
+  });
 
-test('記住家庭資訊可解析為 add_memory', () => {
-  const intent = parseFamilyMemoryIntent('記住爸爸不吃香菜');
-  assert(intent.type === 'add_memory', '應為 add_memory');
-  if (intent.type !== 'add_memory') return;
-  assert(intent.input.subject === '爸爸', 'subject 應為爸爸');
-  assert(intent.input.content === '不吃香菜', 'content 應正確');
+  it('沒有阿福的查詢不得喚起 Memory', () => {
+    for (const text of [
+      '查爸爸的記憶',
+      '找爸爸的資料',
+      '看看爸爸的事情',
+      '有沒有爸爸的記憶',
+    ]) {
+      expect(parseFamilyMemoryIntent(text).type).toBe('unknown');
+    }
+  });
+
+  it('阿福忘記人物資訊可解析為 forget_memory', () => {
+    const intent = parseFamilyMemoryIntent('阿福，忘記媽媽喜歡無糖茶');
+    expect(intent.type).toBe('forget_memory');
+    if (intent.type !== 'forget_memory') return;
+    expect(intent.query.subject).toBe('媽媽');
+    expect(intent.query.keyword).toBe('喜歡無糖茶');
+  });
+
+  it('沒有阿福的忘記不得喚起 Memory', () => {
+    expect(parseFamilyMemoryIntent('忘記媽媽喜歡無糖茶').type).toBe('unknown');
+  });
+
+  it('生活數據可直接解析為 add_record', () => {
+    const intent = parseFamilyMemoryIntent('媽媽今天體重 58.2 公斤');
+    expect(intent.type).toBe('add_record');
+    if (intent.type !== 'add_record') return;
+    expect(intent.input.subject).toBe('媽媽');
+    expect(intent.input.category).toBe('體重');
+    expect(intent.input.value).toBe(58.2);
+    expect(intent.input.unit).toBe('公斤');
+  });
+
+  it('阿福平均睡眠問題可解析為 average', () => {
+    const intent = parseFamilyMemoryIntent('阿福，爸爸這個月平均睡多久');
+    expect(intent.type).toBe('average');
+    if (intent.type !== 'average') return;
+    expect(intent.query.subject).toBe('爸爸');
+    expect(intent.query.category).toBe('睡眠');
+  });
+
+  it('沒有阿福的平均問題不得喚起 Memory', () => {
+    expect(parseFamilyMemoryIntent('爸爸這個月平均睡多久').type).toBe('unknown');
+  });
+
+  it('阿福趨勢問題可解析為 trend', () => {
+    const intent = parseFamilyMemoryIntent('阿福，媽媽體重最近趨勢如何');
+    expect(intent.type).toBe('trend');
+    if (intent.type !== 'trend') return;
+    expect(intent.query.subject).toBe('媽媽');
+    expect(intent.query.category).toBe('體重');
+  });
+
+  it('沒有阿福的趨勢問題不得喚起 Memory', () => {
+    expect(parseFamilyMemoryIntent('媽媽體重最近趨勢如何').type).toBe('unknown');
+  });
+
+  it('阿福查詢生活紀錄可解析為 list_records', () => {
+    const intent = parseFamilyMemoryIntent('阿福，查爸爸的體重紀錄');
+    expect(intent.type).toBe('list_records');
+    if (intent.type !== 'list_records') return;
+    expect(intent.query.subject).toBe('爸爸');
+    expect(intent.query.category).toBe('體重');
+  });
+
+  it('沒有阿福的生活紀錄查詢不得喚起 Memory', () => {
+    expect(parseFamilyMemoryIntent('查爸爸的體重紀錄').type).toBe('unknown');
+  });
+
+  it('未知語句不得誤判成 Memory 操作', () => {
+    expect(parseFamilyMemoryIntent('明天天氣怎麼樣').type).toBe('unknown');
+  });
+
+  it('空白輸入應安全回傳 unknown', () => {
+    expect(parseFamilyMemoryIntent('   ').type).toBe('unknown');
+  });
 });
-
-test('阿福查詢人物記憶可解析為 query_memory', () => {
-  const intent = parseFamilyMemoryIntent('阿福，幫我查爸爸的記憶');
-  assert(intent.type === 'query_memory', '應為 query_memory');
-  if (intent.type !== 'query_memory') return;
-  assert(intent.query.subject === '爸爸', 'subject 應為爸爸');
-  assert(intent.query.keyword === undefined, '人物查詢不應重複帶入人物名稱 keyword');
-});
-
-test('沒有阿福的查詢不得喚起 Memory', () => {
-  const cases = [
-    '查爸爸的記憶',
-    '找爸爸的資料',
-    '看看爸爸的事情',
-    '有沒有爸爸的記憶',
-  ];
-
-  for (const text of cases) {
-    const intent = parseFamilyMemoryIntent(text);
-    assert(intent.type === 'unknown', `${text} 應維持 unknown`);
-  }
-});
-
-test('阿福忘記人物資訊可解析為 forget_memory', () => {
-  const intent = parseFamilyMemoryIntent('阿福，忘記媽媽喜歡無糖茶');
-  assert(intent.type === 'forget_memory', '應為 forget_memory');
-  if (intent.type !== 'forget_memory') return;
-  assert(intent.query.subject === '媽媽', 'subject 應為媽媽');
-  assert(intent.query.keyword === '喜歡無糖茶', 'forget 應保留真正的內容關鍵字');
-});
-
-test('沒有阿福的忘記不得喚起 Memory', () => {
-  const intent = parseFamilyMemoryIntent('忘記媽媽喜歡無糖茶');
-  assert(intent.type === 'unknown', '沒有阿福時應維持 unknown');
-});
-
-test('生活數據可直接解析為 add_record', () => {
-  const intent = parseFamilyMemoryIntent('媽媽今天體重 58.2 公斤');
-  assert(intent.type === 'add_record', '應為 add_record');
-  if (intent.type !== 'add_record') return;
-  assert(intent.input.subject === '媽媽', 'subject 應為媽媽');
-  assert(intent.input.category === '體重', 'category 應為體重');
-  assert(intent.input.value === 58.2, 'value 應為 58.2');
-  assert(intent.input.unit === '公斤', 'unit 應為公斤');
-});
-
-test('阿福平均睡眠問題可解析為 average', () => {
-  const intent = parseFamilyMemoryIntent('阿福，爸爸這個月平均睡多久');
-  assert(intent.type === 'average', '應為 average');
-  if (intent.type !== 'average') return;
-  assert(intent.query.subject === '爸爸', 'subject 應為爸爸');
-  assert(intent.query.category === '睡眠', 'category 應為睡眠');
-});
-
-test('沒有阿福的平均問題不得喚起 Memory', () => {
-  const intent = parseFamilyMemoryIntent('爸爸這個月平均睡多久');
-  assert(intent.type === 'unknown', '沒有阿福時應維持 unknown');
-});
-
-test('阿福趨勢問題可解析為 trend', () => {
-  const intent = parseFamilyMemoryIntent('阿福，媽媽體重最近趨勢如何');
-  assert(intent.type === 'trend', '應為 trend');
-  if (intent.type !== 'trend') return;
-  assert(intent.query.subject === '媽媽', 'subject 應為媽媽');
-  assert(intent.query.category === '體重', 'category 應為體重');
-});
-
-test('沒有阿福的趨勢問題不得喚起 Memory', () => {
-  const intent = parseFamilyMemoryIntent('媽媽體重最近趨勢如何');
-  assert(intent.type === 'unknown', '沒有阿福時應維持 unknown');
-});
-
-test('阿福查詢生活紀錄可解析為 list_records', () => {
-  const intent = parseFamilyMemoryIntent('阿福，查爸爸的體重紀錄');
-  assert(intent.type === 'list_records', '應為 list_records');
-  if (intent.type !== 'list_records') return;
-  assert(intent.query.subject === '爸爸', 'subject 應為爸爸');
-  assert(intent.query.category === '體重', 'category 應為體重');
-});
-
-test('沒有阿福的生活紀錄查詢不得喚起 Memory', () => {
-  const intent = parseFamilyMemoryIntent('查爸爸的體重紀錄');
-  assert(intent.type === 'unknown', '沒有阿福時應維持 unknown');
-});
-
-test('未知語句不得誤判成 Memory 操作', () => {
-  const intent = parseFamilyMemoryIntent('明天天氣怎麼樣');
-  assert(intent.type === 'unknown', '應維持 unknown');
-});
-
-test('空白輸入應安全回傳 unknown', () => {
-  const intent = parseFamilyMemoryIntent('   ');
-  assert(intent.type === 'unknown', '應維持 unknown');
-});
-
-console.log('Memory 2.0 Intent 呼叫詞防誤觸測試完成');
