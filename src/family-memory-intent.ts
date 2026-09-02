@@ -175,17 +175,17 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     };
   }
 
-  if (/^(平均|平均值|平均多久|平均幾)/u.test(callBody)) {
+  if (/平均/u.test(callBody)) {
     return {
       type: 'average',
-      query: extractRecordQuery(normalized),
+      query: extractRecordQuery(callBody),
     };
   }
 
-  if (/^(趨勢|趨勢如何|變化|變化如何|上升還是下降)/u.test(callBody)) {
+  if (/趨勢|變化|上升還是下降/u.test(callBody)) {
     return {
       type: 'trend',
-      query: extractRecordQuery(normalized),
+      query: extractRecordQuery(callBody),
     };
   }
 
@@ -193,8 +193,8 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
     return {
       type: category ? 'list_records' : 'query_memory',
       query: category
-        ? extractRecordQuery(normalized)
-        : extractMemoryQuery(normalized),
+        ? extractRecordQuery(callBody)
+        : extractMemoryQuery(callBody),
     };
   }
 
