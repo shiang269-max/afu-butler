@@ -2313,6 +2313,7 @@ app.post(
                   userMessage,
                   {
                     existingFunctionMatched: false,
+                    actorUserId: event.source.userId || "",
                     integration:
                       familyMemoryIntegration,
                   },
