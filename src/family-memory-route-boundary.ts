@@ -8,6 +8,7 @@ import {
 } from './family-memory-intent';
 import { FamilyMemoryIntegration } from './family-memory-integration';
 import { resolveFamilyMemorySubject } from './family-memory-subject';
+import { resolveFamilyTitle } from './family-title-resolver';
 
 export type FamilyMemoryRouteResult =
   | {
@@ -33,15 +34,30 @@ function resolveActorSubject(
   intent: FamilyMemoryIntent,
   actorUserId?: string,
 ): FamilyMemoryIntent {
+  const resolveSubject = (
+    subject: string | undefined,
+  ): string | undefined => {
+    const styleTarget =
+      resolveFamilyTitle(subject || '');
+
+    if (styleTarget) {
+      return styleTarget.member.primaryNames[0]
+        || styleTarget.member.identity;
+    }
+
+    return resolveFamilyMemorySubject(
+      subject,
+      actorUserId,
+    );
+  };
+
   if (intent.type === 'add_memory') {
     return {
       ...intent,
       input: {
         ...intent.input,
-        subject: resolveFamilyMemorySubject(
-          intent.input.subject,
-          actorUserId,
-        ) || intent.input.subject,
+        subject: resolveSubject(intent.input.subject)
+          || intent.input.subject,
       },
     };
   }
@@ -51,10 +67,7 @@ function resolveActorSubject(
       ...intent,
       query: {
         ...intent.query,
-        subject: resolveFamilyMemorySubject(
-          intent.query.subject,
-          actorUserId,
-        ),
+        subject: resolveSubject(intent.query.subject),
       },
     };
   }
@@ -71,10 +84,8 @@ function resolveActorSubject(
         input: {
           ...intent.input,
           subject:
-            resolveFamilyMemorySubject(
-              intent.input.subject,
-              actorUserId,
-            ) || intent.input.subject,
+            resolveSubject(intent.input.subject)
+            || intent.input.subject,
         },
       };
     }
@@ -83,10 +94,7 @@ function resolveActorSubject(
       ...intent,
       query: {
         ...intent.query,
-        subject: resolveFamilyMemorySubject(
-          intent.query.subject,
-          actorUserId,
-        ),
+        subject: resolveSubject(intent.query.subject),
       },
     };
   }
