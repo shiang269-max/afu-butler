@@ -31,26 +31,24 @@ function extractSubject(text: string): string | undefined {
   const styleTarget = resolveFamilyTitle(text);
   if (styleTarget) return styleTarget.member.primaryNames[0] || styleTarget.member.identity;
 
-  const aliasTargets = Array.from(new Set(
-    text.length === 0
-      ? []
-      : [resolveFamilyAlias(text)],
-  )).filter(Boolean) as ReturnType<typeof resolveFamilyAlias>[];
-
-  for (const aliasTarget of aliasTargets) {
+  const aliasTarget = resolveFamilyAlias(text);
+  if (aliasTarget) {
     const alias = aliasTarget.title.trim();
-    if (!alias || alias === '我') continue;
-    const aliasIndex = text.indexOf(alias);
-    if (aliasIndex >= 0) {
+    if (alias && alias !== '我' && text.includes(alias)) {
       return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
     }
   }
 
   const selfPrefixRelation = text.match(/我(老婆|老婆大人|妻子|哥哥|大哥|弟弟|辰|爸爸|媽媽|母親|父親)/u)?.[1];
   if (selfPrefixRelation) {
-    const relationshipTarget = resolveFamilyAlias(selfPrefixRelation) || resolveFamilyTitle(selfPrefixRelation);
+    const relationshipTarget = resolveFamilyAlias(selfPrefixRelation);
     if (relationshipTarget) {
       return relationshipTarget.member.primaryNames[0] || relationshipTarget.member.identity;
+    }
+
+    const styleRelationshipTarget = resolveFamilyTitle(selfPrefixRelation);
+    if (styleRelationshipTarget) {
+      return styleRelationshipTarget.member.primaryNames[0] || styleRelationshipTarget.member.identity;
     }
   }
 
