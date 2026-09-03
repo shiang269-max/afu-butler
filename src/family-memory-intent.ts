@@ -32,6 +32,8 @@ function extractSubject(text: string): string | undefined {
   const styleTarget = resolveFamilyTitle(text);
   if (styleTarget) return styleTarget.member.primaryNames[0] || styleTarget.member.identity;
 
+  if (text.includes('我')) return '我';
+
   const aliasTarget = resolveFamilyAlias(text);
   if (aliasTarget) return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
 
