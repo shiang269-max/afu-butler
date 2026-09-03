@@ -47,7 +47,7 @@ function isMemoryCommandLike(text: string): boolean {
   }
 
   return (
-    /(?:什麼|甚麼|哪些|哪個|有沒有|嗎|喜歡|愛吃|愛喝|不吃|不喝|習慣|偏好|喜好|記憶|記得|事情|資料|資訊)/u.test(body) &&
+    /(?:什麼|甚麼|哪些|哪個|有沒有|嗎|喜歡|愛吃|愛喝|不吃|不喝|習慣|偏好|喜好|討厭|不喜歡|喜愛)/u.test(body) &&
     /(?:爸爸|媽媽|哥哥|姐姐|弟弟|妹妹|辰|我|娘娘|皇后|太子|辰王|老婆|妻子|大兒子|小兒子)/u.test(body)
   );
 }
@@ -75,11 +75,16 @@ export function hasCallName(message: string): boolean {
     text.includes(callName),
   );
 
-  if (matched && isMemoryCommandLike(text)) {
+  if (isMemoryCommandLike(text)) {
     skipNextReminderInvocationCheck = true;
+    return true;
   }
 
-  return matched;
+  if (matched) {
+    return true;
+  }
+
+  return false;
 }
 
 export function cleanCallNames(message: string): string {
