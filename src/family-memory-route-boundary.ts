@@ -157,20 +157,12 @@ function parsePendingMemoryAction(
  * Family Memory 與既有總管功能之間的安全邊界。
  *
  * 既有功能一旦已經認領訊息，Memory 不得再解析或執行同一則訊息。
- * 下一句修改／取消狀態只在本次 route invocation 消費一次。
+ * 下一句修改／取消狀態只在真正進入 Memory route 後消費一次。
  */
 export function routeFamilyMemoryMessage(
   text: string,
   options: FamilyMemoryRouteOptions,
 ): FamilyMemoryRouteResult {
-  const pending = options.actorUserId
-    ? consumePendingFamilyMemory(options.actorUserId)
-    : null;
-
-  if (pending && options.existingFunctionMatched) {
-    return { type: 'skipped_existing_function' };
-  }
-
   if (options.existingFunctionMatched) {
     return { type: 'skipped_existing_function' };
   }
@@ -179,6 +171,10 @@ export function routeFamilyMemoryMessage(
   if (!integration) {
     throw new Error('執行 Family Memory 必須提供 Integration');
   }
+
+  const pending = options.actorUserId
+    ? consumePendingFamilyMemory(options.actorUserId)
+    : null;
 
   if (pending) {
     const pendingIntent = parsePendingMemoryAction(text, pending.memories);
