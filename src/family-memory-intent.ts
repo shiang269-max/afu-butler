@@ -34,7 +34,7 @@ function extractSubject(text: string): string | undefined {
   const aliasTarget = resolveFamilyAlias(text);
   if (aliasTarget) {
     const alias = aliasTarget.title.trim();
-    const aliasPattern = new RegExp(`(?:^|[，,、\s])${alias}(?=$|[，,、\s])`);
+    const aliasPattern = new RegExp(`(?:^|[，,、\\s])${alias}(?=$|[，,、\\s])`);
     if (alias !== '我' && aliasPattern.test(text)) {
       return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
     }
