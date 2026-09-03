@@ -32,4 +32,26 @@ describe('Family Memory route boundary', () => {
     );
     expect(cancelled.type).toBe('executed');
   });
+
+  it('keeps ambiguous forget results selectable by the next turn', () => {
+    const actorUserId = 'actor-2';
+    const integration = createIntegration();
+    integration.addMemory({ subject: '媽媽', content: '喜歡火鍋' });
+    integration.addMemory({ subject: '媽媽', content: '喜歡咖啡' });
+
+    const ambiguous = routeFamilyMemoryMessage(
+      '阿福，忘記媽媽喜歡',
+      { existingFunctionMatched: false, actorUserId, integration },
+    );
+    expect(ambiguous.type).toBe('executed');
+    if (ambiguous.type !== 'executed') return;
+    expect(ambiguous.result.type).toBe('ambiguous_forget');
+
+    const cancelled = routeFamilyMemoryMessage(
+      '取消 1',
+      { existingFunctionMatched: false, actorUserId, integration },
+    );
+    expect(cancelled.type).toBe('executed');
+    expect(integration.listMemories({ subject: '媽媽' })).toHaveLength(1);
+  });
 });
