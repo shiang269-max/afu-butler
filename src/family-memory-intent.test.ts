@@ -42,6 +42,23 @@ describe('Memory 2.0 Intent 呼叫詞防誤觸', () => {
     }
   });
 
+  it('阿福自然語句陳述人物偏好可解析為 add_memory', () => {
+    const cases = [
+      { text: '阿福哥哥喜歡吃肉', subject: '哥哥', content: '喜歡吃肉' },
+      { text: '阿福，媽媽愛喝無糖茶', subject: '媽媽', content: '愛喝無糖茶' },
+      { text: '阿福，爸爸不吃香菜', subject: '爸爸', content: '不吃香菜' },
+      { text: '阿福辰習慣早睡', subject: '辰', content: '習慣早睡' },
+    ];
+
+    for (const { text, subject, content } of cases) {
+      const intent = parseFamilyMemoryIntent(text);
+      expect(intent.type).toBe('add_memory');
+      if (intent.type !== 'add_memory') continue;
+      expect(intent.input.subject).toBe(subject);
+      expect(intent.input.content).toBe(content);
+    }
+  });
+
   it('自然查詢結尾的疑問詞不應污染關鍵字', () => {
     const intent = parseFamilyMemoryIntent('阿福，媽媽喜歡無糖茶嗎');
     expect(intent.type).toBe('query_memory');
@@ -58,6 +75,16 @@ describe('Memory 2.0 Intent 呼叫詞防誤觸', () => {
       '有沒有爸爸的記憶',
       '媽媽喜歡什麼',
       '爸爸不吃什麼',
+    ]) {
+      expect(parseFamilyMemoryIntent(text).type).toBe('unknown');
+    }
+  });
+
+  it('沒有阿福的自然偏好陳述也不得喚起 Memory', () => {
+    for (const text of [
+      '哥哥喜歡吃肉',
+      '媽媽愛喝無糖茶',
+      '爸爸不吃香菜',
     ]) {
       expect(parseFamilyMemoryIntent(text).type).toBe('unknown');
     }
