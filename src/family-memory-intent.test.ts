@@ -18,6 +18,21 @@ describe('Memory 2.0 Intent 呼叫詞防誤觸', () => {
     expect(intent.input.content).toBe('愛喝茶');
   });
 
+  it('家庭關係前綴應優先於「我」身份', () => {
+    const cases = [
+      { text: '記住我老婆喜歡吃火鍋', subject: '媽媽' },
+      { text: '阿福，我老婆愛喝茶', subject: '媽媽' },
+      { text: '阿福，我哥哥喜歡吃肉', subject: '哥哥' },
+    ];
+
+    for (const { text, subject } of cases) {
+      const intent = parseFamilyMemoryIntent(text);
+      expect(intent.type).toBe('add_memory');
+      if (intent.type !== 'add_memory') continue;
+      expect(intent.input.subject).toBe(subject);
+    }
+  });
+
   it('阿福查詢人物記憶可解析為 query_memory', () => {
     const intent = parseFamilyMemoryIntent('阿福，幫我查爸爸的記憶');
     expect(intent.type).toBe('query_memory');
