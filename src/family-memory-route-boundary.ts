@@ -197,8 +197,12 @@ export function routeFamilyMemoryMessage(
   const result = executeFamilyMemoryIntent(intent, integration);
   if (!result) return { type: 'not_handled', intent };
 
-  if (intent.type === 'query_memory' && result.type === 'memories_found') {
-    setPendingFamilyMemory(options.actorUserId || '', result.memories.slice(0, 10));
+  if (
+    options.actorUserId &&
+    ((intent.type === 'query_memory' && result.type === 'memories_found') ||
+      result.type === 'ambiguous_forget')
+  ) {
+    setPendingFamilyMemory(options.actorUserId, result.memories.slice(0, 10));
   }
 
   return { type: 'executed', intent, result };
