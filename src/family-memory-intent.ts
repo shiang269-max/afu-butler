@@ -20,8 +20,7 @@ export type FamilyMemoryIntent =
 const SUBJECTS = ['爸爸', '媽媽', '哥哥', '姐姐', '弟弟', '妹妹', '辰', '我'];
 const MEMORY_CALL_NAMES = ['阿福'];
 const MEMORY_QUERY_WORDS = [
-  '什麼', '甚麼', '哪些', '哪個', '有沒有', '嗎', '喜歡', '愛吃', '愛喝',
-  '不吃', '不喝', '習慣', '偏好', '喜好', '記憶', '記得', '事情', '資料', '資訊',
+  '什麼', '甚麼', '哪些', '哪個', '有沒有', '嗎', '記憶', '事情', '資料', '資訊',
 ];
 
 function hasMemoryCallName(text: string): boolean {
@@ -65,6 +64,12 @@ function extractContentAfterSubject(text: string, subject?: string): string {
   return content.replace(/^(是|為|：|:)/, '').trim();
 }
 
+function extractNaturalMemoryContent(text: string, subject?: string): string {
+  let content = text.replace(/^阿福[，,、]?\s*/u, '').replace(/^(請)?(幫我)?\s*/u, '').trim();
+  if (subject && content.startsWith(subject)) content = content.slice(subject.length).trim();
+  return content.replace(/^(是|為|：|:)/, '').trim();
+}
+
 function extractMemoryQuery(text: string): MemoryQuery {
   const subject = extractSubject(text);
   let keyword = text
@@ -95,6 +100,12 @@ function extractRecordQuery(text: string): RecordQuery {
 
 function looksLikeNaturalMemoryQuery(text: string): boolean {
   return Boolean(extractSubject(text)) && MEMORY_QUERY_WORDS.some((word) => text.includes(word));
+}
+
+function looksLikeNaturalMemoryWrite(text: string): boolean {
+  if (!extractSubject(text)) return false;
+  if (looksLikeNaturalMemoryQuery(text)) return false;
+  return /喜歡|愛吃|愛喝|不吃|不喝|習慣|偏好|喜好|討厭|不喜歡|喜愛/u.test(text);
 }
 
 export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
@@ -133,6 +144,11 @@ export function parseFamilyMemoryIntent(text: string): FamilyMemoryIntent {
 
   if (/^(查|找|搜尋|看看|列出|有哪些|有沒有)/u.test(callBody)) {
     return { type: category ? 'list_records' : 'query_memory', query: category ? extractRecordQuery(callBody) : extractMemoryQuery(callBody) };
+  }
+
+  if (looksLikeNaturalMemoryWrite(callBody)) {
+    const content = extractNaturalMemoryContent(callBody, subject);
+    if (content) return { type: 'add_memory', input: { subject: subject || '家庭', content } };
   }
 
   if (looksLikeNaturalMemoryQuery(callBody)) return { type: 'query_memory', query: extractMemoryQuery(callBody) };
