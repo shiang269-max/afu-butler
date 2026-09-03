@@ -1,7 +1,7 @@
 /**
- * =========================================================
+ * =====================================================
  * 總管呼叫詞統一管理
- * =========================================================
+ * =====================================================
  */
 
 import {
@@ -27,9 +27,7 @@ export function getActiveStyleCallNames(): string[] {
   return [...callNames];
 }
 
-let skipNextReminderInvocationCheck = false;
-
-function isMemoryCommandLike(text: string): boolean {
+export function isMemoryCommandLike(text: string): boolean {
   const normalized = text.trim();
   if (!normalized) return false;
 
@@ -53,16 +51,10 @@ function isMemoryCommandLike(text: string): boolean {
 }
 
 export function getActiveCallNames(): string[] {
-  const activeStyleCallNames = getActiveStyleCallNames();
-  if (skipNextReminderInvocationCheck) {
-    skipNextReminderInvocationCheck = false;
-    return [];
-  }
-
   return [
     ...new Set([
       ...UNIVERSAL_CALL_NAMES,
-      ...activeStyleCallNames,
+      ...getActiveStyleCallNames(),
     ]),
   ];
 }
@@ -71,20 +63,13 @@ export function hasCallName(message: string): boolean {
   const text = message.trim();
   if (!text) return false;
 
-  const matched = getActiveCallNames().some((callName) =>
+  if (isMemoryCommandLike(text)) {
+    return true;
+  }
+
+  return getActiveCallNames().some((callName) =>
     text.includes(callName),
   );
-
-  if (isMemoryCommandLike(text)) {
-    skipNextReminderInvocationCheck = true;
-    return true;
-  }
-
-  if (matched) {
-    return true;
-  }
-
-  return false;
 }
 
 export function cleanCallNames(message: string): string {
