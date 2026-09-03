@@ -13,7 +13,7 @@ export type FamilyMemoryIntent =
   | { type: 'cancel_pending_memories'; input: { ids: string[] } }
   | { type: 'add_record'; input: { subject: string; category: string; value?: number; unit?: string; content?: string } }
   | { type: 'list_records'; query: RecordQuery }
-  | { type: 'average'; query: RecordQuery }
+  | { type: 'average', query: RecordQuery }
   | { type: 'trend', query: RecordQuery }
   | { type: 'unknown'; text: string };
 
@@ -31,12 +31,26 @@ function extractSubject(text: string): string | undefined {
   const styleTarget = resolveFamilyTitle(text);
   if (styleTarget) return styleTarget.member.primaryNames[0] || styleTarget.member.identity;
 
-  const aliasTarget = resolveFamilyAlias(text);
-  if (aliasTarget) {
+  const aliasTargets = Array.from(new Set(
+    text.length === 0
+      ? []
+      : [resolveFamilyAlias(text)],
+  )).filter(Boolean) as ReturnType<typeof resolveFamilyAlias>[];
+
+  for (const aliasTarget of aliasTargets) {
     const alias = aliasTarget.title.trim();
-    const aliasPattern = new RegExp(`(?:^|[，,、\\s])${alias}(?=$|[，,、\\s])`);
-    if (alias !== '我' && aliasPattern.test(text)) {
+    if (!alias || alias === '我') continue;
+    const aliasIndex = text.indexOf(alias);
+    if (aliasIndex >= 0) {
       return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
+    }
+  }
+
+  const selfPrefixRelation = text.match(/我(老婆|老婆大人|妻子|哥哥|大哥|弟弟|辰|爸爸|媽媽|母親|父親)/u)?.[1];
+  if (selfPrefixRelation) {
+    const relationshipTarget = resolveFamilyAlias(selfPrefixRelation) || resolveFamilyTitle(selfPrefixRelation);
+    if (relationshipTarget) {
+      return relationshipTarget.member.primaryNames[0] || relationshipTarget.member.identity;
     }
   }
 
