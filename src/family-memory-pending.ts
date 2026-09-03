@@ -22,6 +22,10 @@ export function setPendingFamilyMemory(
   });
 }
 
+export function hasPendingFamilyMemory(actorUserId: string): boolean {
+  return Boolean(actorUserId && pending.has(actorUserId));
+}
+
 export function consumePendingFamilyMemory(
   actorUserId: string,
 ): FamilyMemoryPendingOperation | null {
