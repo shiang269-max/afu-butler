@@ -32,9 +32,15 @@ function extractSubject(text: string): string | undefined {
   if (styleTarget) return styleTarget.member.primaryNames[0] || styleTarget.member.identity;
 
   const aliasTarget = resolveFamilyAlias(text);
-  if (aliasTarget) return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
+  if (aliasTarget) {
+    const alias = aliasTarget.title.trim();
+    const aliasPattern = new RegExp(`(?:^|[，,、\s])${alias}(?=$|[，,、\s])`);
+    if (alias !== '我' && aliasPattern.test(text)) {
+      return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
+    }
+  }
 
-  if (/(?:我\s*)?(?:本人)/u.test(text) || /我/u.test(text)) return '我';
+  if (/我/u.test(text)) return '我';
 
   return SUBJECTS.find((subject) => text.includes(subject));
 }
