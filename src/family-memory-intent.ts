@@ -14,7 +14,7 @@ export type FamilyMemoryIntent =
   | { type: 'add_record'; input: { subject: string; category: string; value?: number; unit?: string; content?: string } }
   | { type: 'list_records'; query: RecordQuery }
   | { type: 'average'; query: RecordQuery }
-  | { type: 'trend'; query: RecordQuery }
+  | { type: 'trend', query: RecordQuery }
   | { type: 'unknown'; text: string };
 
 const SUBJECTS = ['爸爸', '媽媽', '哥哥', '姐姐', '弟弟', '妹妹', '辰', '我'];
@@ -34,7 +34,7 @@ function extractSubject(text: string): string | undefined {
   const aliasTarget = resolveFamilyAlias(text);
   if (aliasTarget) return aliasTarget.member.primaryNames[0] || aliasTarget.member.identity;
 
-  if (text.includes('我')) return '我';
+  if (/(?:我\s*)?(?:本人)/u.test(text) || /我/u.test(text)) return '我';
 
   return SUBJECTS.find((subject) => text.includes(subject));
 }
