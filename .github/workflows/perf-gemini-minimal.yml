@@ -1,0 +1,33 @@
+name: Perf Gemini Minimal Thinking
+
+on:
+  push:
+    branches:
+      - perf-gemini-minimal-thinking
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf-gemini-minimal-thinking
+      - name: Patch Gemini thinking level
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/ai/ai-core.ts')
+          s = p.read_text(encoding='utf-8')
+          old = """      config: {\n        systemInstruction: SYSTEM_INSTRUCTION,\n        ...(googleSearchTools.length > 0 ? { tools: googleSearchTools } : {}),\n      },"""
+          new = """      config: {\n        systemInstruction: SYSTEM_INSTRUCTION,\n        thinkingConfig: {\n          thinkingLevel: 'minimal',\n        },\n        ...(googleSearchTools.length > 0 ? { tools: googleSearchTools } : {}),\n      },"""
+          if old not in s:
+              raise SystemExit('target block not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+          git config user.name "總管"
+          git config user.email "butler@local"
+          git add src/ai/ai-core.ts
+          git commit -m "降低 Gemini 一般聊天思考延遲"
+          git push origin perf-gemini-minimal-thinking
