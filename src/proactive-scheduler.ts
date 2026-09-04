@@ -7,6 +7,7 @@ import {
 
 import {
   getDueReminders,
+  getReminderTargets,
   claimReminder,
   markReminderSent,
   markReminderFailed,
@@ -311,42 +312,49 @@ async function checkReminders(
         continue;
       }
 
-      if (reminder.target.type === 'all') {
-        await lineClient.pushMessage({
-          to: reminder.groupId,
-          messages: [
-            {
-              type: 'textV2',
-              text: `{target} ${reminder.content}`,
-              substitution: {
-                target: {
-                  type: 'mention',
-                  mentionee: { type: 'all' },
-                },
-              },
-            },
-          ],
-        });
+      const targets = getReminderTargets(reminder);
+      const substitution: Record<string, {
+        type: 'mention';
+        mentionee:
+          | { type: 'all' }
+          | { type: 'user'; userId: string };
+      }> = {};
+
+      const placeholders: string[] = [];
+
+      if (targets.some((target) => target.type === 'all')) {
+        placeholders.push('{target0}');
+        substitution.target0 = {
+          type: 'mention',
+          mentionee: { type: 'all' },
+        };
       } else {
-        await lineClient.pushMessage({
-          to: reminder.groupId,
-          messages: [
-            {
-              type: 'textV2',
-              text: `{target} ${reminder.content}`,
-              substitution: {
-                target: {
-                  type: 'mention',
-                  mentionee: {
-                    type: 'user',
-                    userId: reminder.target.userId,
-                  },
-                },
-              },
+        targets.forEach((target, index) => {
+          if (target.type !== 'user') return;
+
+          const key = `target${index}`;
+          placeholders.push(`{${key}}`);
+          substitution[key] = {
+            type: 'mention',
+            mentionee: {
+              type: 'user',
+              userId: target.userId,
             },
-          ],
+          };
         });
       }
+
+      const prefix = placeholders.join(' ');
+      await lineClient.pushMessage({
+        to: reminder.groupId,
+        messages: [
+          {
+            type: 'textV2',
+            text: `${prefix} ${reminder.content}`.trim(),
+            substitution,
+          },
+        ],
+      });
 
       markReminderSent(reminder.id);
       console.log('[Reminder] 已發送 Reminder:', reminder.id);
