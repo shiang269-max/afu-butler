@@ -5,7 +5,22 @@ export type FamilyMemoryPendingOperation = {
   memories: FamilyMemory[];
 };
 
-const pending = new Map<string, FamilyMemoryPendingOperation>();
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+type PendingEntry = {
+  operation: FamilyMemoryPendingOperation;
+  expiresAt: number;
+};
+
+const pending = new Map<string, PendingEntry>();
+
+function cleanupExpired(now = Date.now()): void {
+  for (const [actorUserId, entry] of pending) {
+    if (entry.expiresAt <= now) {
+      pending.delete(actorUserId);
+    }
+  }
+}
 
 export function setPendingFamilyMemory(
   actorUserId: string,
@@ -17,13 +32,19 @@ export function setPendingFamilyMemory(
   }
 
   pending.set(actorUserId, {
-    actorUserId,
-    memories: memories.map((memory) => ({ ...memory, tags: [...memory.tags] })),
+    operation: {
+      actorUserId,
+      memories: memories.map((memory) => ({ ...memory, tags: [...memory.tags] })),
+    },
+    expiresAt: Date.now() + PENDING_TTL_MS,
   });
 }
 
 export function hasPendingFamilyMemory(actorUserId: string): boolean {
-  return Boolean(actorUserId && pending.has(actorUserId));
+  if (!actorUserId) return false;
+
+  cleanupExpired();
+  return pending.has(actorUserId);
 }
 
 export function consumePendingFamilyMemory(
@@ -31,9 +52,11 @@ export function consumePendingFamilyMemory(
 ): FamilyMemoryPendingOperation | null {
   if (!actorUserId) return null;
 
-  const operation = pending.get(actorUserId) || null;
+  cleanupExpired();
+
+  const entry = pending.get(actorUserId) || null;
   pending.delete(actorUserId);
-  return operation;
+  return entry?.operation || null;
 }
 
 export function clearPendingFamilyMemory(actorUserId: string): void {
