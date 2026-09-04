@@ -69,7 +69,7 @@ export function buildFamilyMemoryResponse(
       if (result.result.count < 2 || result.result.first === null || result.result.latest === null) {
         return '目前沒有足夠的數值紀錄可以判斷趨勢。';
       }
-      return `趨勢：${result.result.direction}，從 ${result.result.first} 變為 ${result.result.latest}，變化 ${result.result.change}`;
+      return `趨勢：${result.result.direction}，從 ${result.result.first.value} 變為 ${result.result.latest.value}，變化 ${result.result.change}`;
 
     case 'ambiguous_forget':
       return `找到多筆可能的記憶，暫時不直接刪除：\n${result.memories
