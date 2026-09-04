@@ -1,0 +1,37 @@
+name: Fix vague reminder
+on:
+  push:
+    branches: [fix-reminder-vague-run]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-reminder-vague-run
+          fetch-depth: 0
+      - name: Patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/reminder-handler.ts')
+          s = p.read_text(encoding='utf-8')
+          old = """  if (!normalizedMessage) {\n    /* 「喳子」本身只是呼叫總管，不是 Reminder 指令。 */\n    return { handled: false };\n  }\n"""
+          new = old + """\n  /* 單獨說「提醒」只有意圖，沒有可解析的 Reminder 操作；直接請使用者補充，避免無意義呼叫 Gemini。 */\n  if (normalizedMessage === '提醒') {\n    return {\n      handled: true,\n      message: buildReminderResponse('主上，您要提醒什麼？請告訴奴才時間與內容。'),\n    };\n  }\n"""
+          if old not in s:
+              raise SystemExit('target block not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Build
+        run: |
+          npm install
+          npm run build
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/reminder-handler.ts
+          git commit -m "修正單獨提醒不應進入 Reminder 解析器"
+          git push
