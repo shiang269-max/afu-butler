@@ -164,12 +164,12 @@ async function sendProactiveMessage(
   lineClient: messagingApi.MessagingApiClient,
   groupId: string,
   text: string,
-): Promise<void> {
+): Promise<boolean> {
   const quota = await getQuotaSnapshot(lineClient);
 
   if (!canSendPush(quota, 'non-essential')) {
     console.log('[Quota Guard] 阻止非必要主動 Push。', JSON.stringify(quota));
-    return;
+    return false;
   }
 
   await lineClient.pushMessage({
@@ -181,6 +181,8 @@ async function sendProactiveMessage(
       },
     ],
   });
+
+  return true;
 }
 
 function getGoodNightMessage(): string {
@@ -226,7 +228,9 @@ async function handleGoodNight(
 
   if (state.lastGoodNightDate === date) return;
 
-  await sendProactiveMessage(lineClient, groupId, getGoodNightMessage());
+  const sent = await sendProactiveMessage(lineClient, groupId, getGoodNightMessage());
+  if (!sent) return;
+
   state.lastGoodNightDate = date;
 }
 
@@ -244,7 +248,9 @@ async function handleGoodMorning(
 
   if (state.lastGoodMorningDate === date) return;
 
-  await sendProactiveMessage(lineClient, groupId, getGoodMorningMessage());
+  const sent = await sendProactiveMessage(lineClient, groupId, getGoodMorningMessage());
+  if (!sent) return;
+
   state.lastGoodMorningDate = date;
   state.lastHumanMessageAt = Date.now();
 }
@@ -281,7 +287,8 @@ async function handleSilence(
   const reply = await generateProactiveReply('silence');
   if (!reply || !reply.trim()) return;
 
-  await sendProactiveMessage(lineClient, groupId, reply.trim());
+  const sent = await sendProactiveMessage(lineClient, groupId, reply.trim());
+  if (!sent) return;
 
   state.silenceRepliesCount += 1;
   state.lastHumanMessageAt = Date.now();
