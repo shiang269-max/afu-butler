@@ -329,7 +329,10 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
       }
 
       const conversationKey = getConversationKey(event);
+      const routeReceivedAt = Date.now();
+      console.log(`[RouteTiming] QUEUE_ENTER key=${conversationKey} elapsed=0ms message=${JSON.stringify(userMessage)}`);
       return enqueueConversationTask(conversationKey, async () => {
+        console.log(`[RouteTiming] QUEUE_START key=${conversationKey} wait=${Date.now() - routeReceivedAt}ms`);
         const historyBeforeMessage = getMemory(conversationKey);
         const hasTrigger = hasCallName(userMessage);
         const hasTargetIntent = hasFamilyTargetIntent(userMessage);
@@ -510,9 +513,11 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
         }
 
         try {
+          const stageStartedAt = Date.now();
           const reminderGroupId = event.source.type === 'group' ? event.source.groupId : loadFamilyGroupId();
           if (reminderGroupId) {
             const reminderResult = await handleReminderMessage(userMessage, event.source.userId || '', reminderGroupId, gemini, hasReminderInvocation(userMessage));
+            console.log(`[RouteTiming] REMINDER_DONE elapsed=${Date.now() - stageStartedAt}ms total=${Date.now() - routeReceivedAt}ms`);
             if (reminderResult.handled) {
               const reminderReply = reminderResult.message || (reminderResult.created ? buildStyleResponse('已記下，奴才會依旨提醒。') : buildStyleResponse('喳，奴才已處理這道 Reminder。'));
               const reminderMentionUserIds = event.source.type === 'group' ? reminderResult.mentionUserIds : [];
@@ -529,11 +534,13 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
         }
 
         try {
+          const stageStartedAt = Date.now();
           const familyMemoryRoute = routeFamilyMemoryMessage(userMessage, {
             existingFunctionMatched: false,
             actorUserId: event.source.userId || '',
             integration: familyMemoryIntegration,
           });
+          console.log(`[RouteTiming] MEMORY_DONE elapsed=${Date.now() - stageStartedAt}ms total=${Date.now() - routeReceivedAt}ms type=${familyMemoryRoute.type}`);
           if (familyMemoryRoute.type === 'executed') {
             const reply = buildStyleResponse(buildFamilyMemoryResponse(familyMemoryRoute.result));
             await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
@@ -582,9 +589,14 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
             : null;
           const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;
           const aiContext = createAiContext(event, familyMember, historyBeforeMessage, cleanedMessage || '有人在聊天中叫你，請自然地回應。');
+          console.log(`[RouteTiming] PRE_AI elapsed=${Date.now() - routeReceivedAt}ms`);
+          const aiStartedAt = Date.now();
           const aiResult = await runAiCore({ geminiApiManager, context: aiContext });
+          console.log(`[RouteTiming] AI_DONE elapsed=${Date.now() - aiStartedAt}ms total=${Date.now() - routeReceivedAt}ms`);
           const replyText = aiResult.text.trim();
+          const replyStartedAt = Date.now();
           await sendAiReply(event.replyToken, replyText, event.source.type === 'group' ? familyTarget : null);
+          console.log(`[RouteTiming] REPLY_DONE elapsed=${Date.now() - replyStartedAt}ms total=${Date.now() - routeReceivedAt}ms`);
           addToMemory(conversationKey, 'user', userMessage);
           addToMemory(conversationKey, 'assistant', replyText);
         } catch (error) {
