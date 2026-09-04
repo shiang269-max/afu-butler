@@ -22,17 +22,12 @@ jobs:
           p = Path('src/index.ts')
           s = p.read_text(encoding='utf-8')
           old = """          const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));\n          const resolvedFamilyTarget = wantsAll ? null : await resolveFamilyTarget(cleanedMessage, gemini);\n          const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;\n"""
-          new = """          const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));\n          const hasFamilyTargetIntent = hasFamilyTargetIntentForAi(cleanedMessage);\n          const resolvedFamilyTarget = wantsAll || !hasFamilyTargetIntent\n            ? null\n            : await resolveFamilyTarget(cleanedMessage, gemini);\n          const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;\n"""
+          new = """          const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));\n          const shouldResolveFamilyTarget = wantsAll || hasFamilyTargetIntent(cleanedMessage);\n          const resolvedFamilyTarget = shouldResolveFamilyTarget && !wantsAll\n            ? await resolveFamilyTarget(cleanedMessage, gemini)\n            : null;\n          const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;\n"""
           if old not in s:
               raise SystemExit('target block not found')
+          if 'function hasFamilyTargetIntent' not in s:
+              raise SystemExit('hasFamilyTargetIntent helper not found')
           s = s.replace(old, new, 1)
-          marker = "function hasFamilyTargetIntent(message: string): boolean {"
-          if marker not in s:
-              insert_at = s.index("function hasFamilyTargetIntent") if "function hasFamilyTargetIntent" in s else -1
-              if insert_at < 0:
-                  raise SystemExit('family target helper not found')
-          # Reuse existing helper under a local name without changing its semantics.
-          s = s.replace('hasFamilyTargetIntentForAi(cleanedMessage)', 'hasFamilyTargetIntent(cleanedMessage)', 1)
           p.write_text(s, encoding='utf-8')
           PY
       - name: Verify build
