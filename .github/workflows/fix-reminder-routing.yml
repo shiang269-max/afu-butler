@@ -1,0 +1,42 @@
+name: 修正 Reminder 路由邊界
+
+on:
+  push:
+    branches:
+      - reminder-tested-c2
+
+permissions:
+  contents: write
+
+jobs:
+  fix-reminder-routing:
+    if: "!startsWith(github.event.head_commit.message, '修正 Reminder 路由邊界')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 修正 Reminder 判斷
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/reminder-handler.ts')
+          text = path.read_text(encoding='utf-8')
+          old = """  const hasReminderIntent =\n    mayBeReminder(normalizedMessage) ||\n    normalizedMessage.length > 0;\n"""
+          new = """  const hasReminderIntent =\n    mayBeReminder(normalizedMessage);\n"""
+
+          if old not in text:
+              raise SystemExit('找不到目標 Reminder 路由條件，停止修改')
+
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Commit 修正
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/reminder-handler.ts
+          git diff --cached --exit-code && exit 0 || true
+          git commit -m "修正 Reminder 路由邊界"
+          git push
