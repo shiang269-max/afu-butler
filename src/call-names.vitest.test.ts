@@ -13,6 +13,7 @@ import {
   getActiveCallNamesText,
   isCallNameHelpIntent,
   buildActiveCallNamesHelpMessage,
+  isMemoryCommand,
 } from './call-names';
 
 
@@ -85,6 +86,37 @@ describe(
 
         it('空字串應回傳 false', () => {
           expect(hasCallName('')).toBe(false);
+        });
+      },
+    );
+
+    describe(
+      'Memory 指令判斷',
+      () => {
+        it('應辨識 Memory 指令且不改變全域呼叫詞狀態', () => {
+          expect(isMemoryCommand('阿福，記住媽媽喜歡火鍋')).toBe(true);
+          expect(getActiveCallNames()).toContain('阿福');
+          expect(getActiveCallNames()).toContain('總管');
+        });
+
+        it('連續並發式呼叫不應互相消耗呼叫詞', () => {
+          expect(hasCallName('阿福，記住爸爸喜歡茶')).toBe(true);
+          expect(getActiveCallNames()).toEqual([
+            '阿福',
+            '大內總管',
+            '總管',
+            '內內',
+            '喳子',
+            '渣子',
+          ]);
+          expect(getActiveCallNames()).toEqual([
+            '阿福',
+            '大內總管',
+            '總管',
+            '內內',
+            '喳子',
+            '渣子',
+          ]);
         });
       },
     );
