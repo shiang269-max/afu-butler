@@ -19,7 +19,6 @@ import {
   getQuotaSnapshot,
 } from './line-quota';
 
-
 /*
  * =========================================================
  * 總管主動訊息排程器
@@ -273,7 +272,8 @@ async function handleSilence(
 
   if (state.silenceRepliesCount >= MAX_SILENCE_REPLIES_PER_DAY) return;
 
-  const silenceDurationMs = Date.now() - state.lastHumanMessageAt;
+  const silenceStartedAt = state.lastHumanMessageAt;
+  const silenceDurationMs = Date.now() - silenceStartedAt;
   const silenceThresholdMs = SILENCE_HOURS * 60 * 60 * 1000;
 
   if (silenceDurationMs < silenceThresholdMs) return;
@@ -288,11 +288,16 @@ async function handleSilence(
   const reply = await generateProactiveReply('silence');
   if (!reply || !reply.trim()) return;
 
+  /* Gemini 等待期間若有人發言，這次冷場判斷已經失效。 */
+  if (state.lastHumanMessageAt !== silenceStartedAt) return;
+
   const sent = await sendProactiveMessage(lineClient, groupId, reply.trim());
   if (!sent) return;
 
   state.silenceRepliesCount += 1;
-  state.lastHumanMessageAt = Date.now();
+  if (state.lastHumanMessageAt === silenceStartedAt) {
+    state.lastHumanMessageAt = Date.now();
+  }
 }
 
 async function checkReminders(
