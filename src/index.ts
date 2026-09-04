@@ -330,268 +330,269 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
 
       const conversationKey = getConversationKey(event);
       return enqueueConversationTask(conversationKey, async () => {
-      const historyBeforeMessage = getMemory(conversationKey);
-      const hasTrigger = hasCallName(userMessage);
-      const hasTargetIntent = hasFamilyTargetIntent(userMessage);
-      const shouldInvokeController = hasTrigger || hasTargetIntent;
-      const observerTargetId = event.source.type === 'group' ? event.source.groupId : event.source.userId;
+        const historyBeforeMessage = getMemory(conversationKey);
+        const hasTrigger = hasCallName(userMessage);
+        const hasTargetIntent = hasFamilyTargetIntent(userMessage);
+        const shouldInvokeController = hasTrigger || hasTargetIntent;
+        const observerTargetId = event.source.type === 'group' ? event.source.groupId : event.source.userId;
 
-      if (observerTargetId && isObserverMuteCommand(userMessage)) {
-        const mutedUntil = muteObserver(observerTargetId);
-        console.log(`[ObserverRoute][${observerTraceId}] MUTE until=${new Date(mutedUntil).toISOString()}`);
-        const reply = buildStyleResponse('喳，遵旨。奴才先安靜。');
-        await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply }] });
-        addToMemory(conversationKey, 'user', userMessage);
-        addToMemory(conversationKey, 'assistant', reply);
-        return;
-      }
-
-      if (observerTargetId && isObserverUnmuteCommand(userMessage)) {
-        unmuteObserver(observerTargetId);
-        console.log(`[ObserverRoute][${observerTraceId}] UNMUTE`);
-        const reply = buildStyleResponse('喳，奴才恢復值班。');
-        await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply }] });
-        addToMemory(conversationKey, 'user', userMessage);
-        addToMemory(conversationKey, 'assistant', reply);
-        return;
-      }
-
-      if (hasTrigger && /額度|配額/.test(userMessage)) {
-        try {
-          const quota = await getQuotaSnapshot(lineClient);
-          const quotaReply = formatQuotaSummary(quota);
-          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: quotaReply.slice(0, 5000) }] });
+        if (observerTargetId && isObserverMuteCommand(userMessage)) {
+          const mutedUntil = muteObserver(observerTargetId);
+          console.log(`[ObserverRoute][${observerTraceId}] MUTE until=${new Date(mutedUntil).toISOString()}`);
+          const reply = buildStyleResponse('喳，遵旨。奴才先安靜。');
+          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply }] });
           addToMemory(conversationKey, 'user', userMessage);
-          addToMemory(conversationKey, 'assistant', quotaReply);
-        } catch (error) {
-          logError('LINE 額度查詢失敗', error);
+          addToMemory(conversationKey, 'assistant', reply);
+          return;
+        }
+
+        if (observerTargetId && isObserverUnmuteCommand(userMessage)) {
+          unmuteObserver(observerTargetId);
+          console.log(`[ObserverRoute][${observerTraceId}] UNMUTE`);
+          const reply = buildStyleResponse('喳，奴才恢復值班。');
+          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply }] });
+          addToMemory(conversationKey, 'user', userMessage);
+          addToMemory(conversationKey, 'assistant', reply);
+          return;
+        }
+
+        if (hasTrigger && /額度|配額/.test(userMessage)) {
           try {
-            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('奴才暫時查不到 LINE 額度，請稍後再問。') }] });
-          } catch (fallbackError) {
-            logError('LINE 額度查詢備援回覆失敗', fallbackError);
-          }
-        }
-        return;
-      }
-
-      try {
-        const locationRouteResult = await handleHomeRouteRequest(userMessage, event.source.userId || '');
-        if (locationRouteResult.handled) {
-          const locationRouteReply = locationRouteResult.replyText || (locationRouteResult.success ? buildStyleResponse('喳，奴才已取得回家的路程資訊。') : buildStyleResponse('喳，奴才目前無法取得這道位置資訊。'));
-          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: locationRouteReply.slice(0, 5000) }] });
-          addToMemory(conversationKey, 'user', userMessage);
-          addToMemory(conversationKey, 'assistant', locationRouteReply);
-          return;
-        }
-      } catch (error) {
-        logError('Location Route 處理失敗', error);
-        try {
-          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。') }] });
-        } catch (fallbackError) {
-          logError('Location Route 備援回覆失敗', fallbackError);
-        }
-        return;
-      }
-
-      try {
-        const locationIntentResult = handleLocationIntent(userMessage, event.source.userId || '');
-        if (locationIntentResult.handled) {
-          const canExecute = canExecuteLocationIntent(locationIntentResult);
-          let locationReply: string;
-
-          if (!canExecute && locationIntentResult.clarificationRequired) {
-            locationReply = locationIntentResult.clarificationMessage || buildStyleResponse('總管目前還缺少必要的位置資訊，請先提供目前位置或設定固定位置。');
-          } else if (canExecute && locationIntentResult.intent === 'CURRENT_LOCATION' && locationIntentResult.locationResolution?.location) {
-            const location = locationIntentResult.locationResolution.location;
-            locationReply = location.address ? `主上目前的位置是：${location.address}` : `主上目前的位置座標是：${location.latitude}, ${location.longitude}`;
-          } else if (canExecute && (locationIntentResult.intent === 'NEAR_CURRENT' || locationIntentResult.intent === 'NEAR_HOME') && locationIntentResult.action) {
+            const quota = await getQuotaSnapshot(lineClient);
+            const quotaReply = formatQuotaSummary(quota);
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: quotaReply.slice(0, 5000) }] });
+            addToMemory(conversationKey, 'user', userMessage);
+            addToMemory(conversationKey, 'assistant', quotaReply);
+          } catch (error) {
+            logError('LINE 額度查詢失敗', error);
             try {
-              const placesResult = await handleLocationPlacesAction({
-                action: locationIntentResult.action === 'SEARCH_NEAR_HOME' ? 'SEARCH_NEAR_HOME' : 'SEARCH_NEAR_CURRENT',
-                message: userMessage,
-                userId: event.source.userId || '',
-              });
-
-              if (!placesResult.success) {
-                if (placesResult.reason === 'current-location-unknown') {
-                  locationReply = buildStyleResponse('喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。');
-                } else if (placesResult.reason === 'home-location-unknown') {
-                  locationReply = buildStyleResponse('喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。');
-                } else if (placesResult.reason === 'MISSING_API_KEY') {
-                  locationReply = buildStyleResponse('喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。');
-                } else {
-                  locationReply = buildStyleResponse('喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。');
-                }
-              } else {
-                const places = placesResult.places || [];
-                if (!places.length) {
-                  locationReply = buildStyleResponse('喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。');
-                } else {
-                  const placeLines = places.slice(0, 10).map((place: any, index: number) => {
-                    const name = typeof place?.displayName === 'string' ? place.displayName : typeof place?.displayName?.text === 'string' ? place.displayName.text : typeof place?.name === 'string' ? place.name : '未命名店家';
-                    const address = typeof place?.formattedAddress === 'string' ? place.formattedAddress : typeof place?.address === 'string' ? place.address : '';
-                    const rating = typeof place?.rating === 'number' ? `｜評分 ${place.rating}` : '';
-                    const distance = typeof place?.distanceMeters === 'number' ? `｜約 ${Math.round(place.distanceMeters)} 公尺` : '';
-                    return `${index + 1}. ${name}${rating}${distance}${address ? `\n   ${address}` : ''}`;
-                  });
-                  const searchLabel = locationIntentResult.intent === 'NEAR_HOME' ? '固定家附近' : '目前位置附近';
-                  locationReply = buildStyleResponse(`喳，奴才已依照「${searchLabel}」的實際位置查到以下店家：\n\n`) + placeLines.join('\n\n');
-                }
-              }
-            } catch (error) {
-              logError('Location Places Action 處理失敗', error);
-              locationReply = buildStyleResponse('喳，奴才已接到您的附近搜尋需求，但目前無法取得店家資料，請稍後再試。');
+              await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('奴才暫時查不到 LINE 額度，請稍後再問。') }] });
+            } catch (fallbackError) {
+              logError('LINE 額度查詢備援回覆失敗', fallbackError);
             }
-          } else {
-            locationReply = locationIntentResult.clarificationMessage || buildStyleResponse('喳，奴才已接住這道位置需求，但目前還缺少可以執行的功能。');
           }
-
-          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: locationReply.slice(0, 5000) }] });
-          addToMemory(conversationKey, 'user', userMessage);
-          addToMemory(conversationKey, 'assistant', locationReply);
           return;
         }
-      } catch (error) {
-        logError('Location Intent 處理失敗', error);
+
         try {
-          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。') }] });
-        } catch (fallbackError) {
-          logError('Location Intent 備援回覆失敗', fallbackError);
-        }
-        return;
-      }
-
-      if (hasTrigger && isCallNameHelpIntent(userMessage)) {
-        const reply = buildActiveCallNamesHelpMessage();
-        await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
-        addToMemory(conversationKey, 'user', userMessage);
-        addToMemory(conversationKey, 'assistant', reply);
-        return;
-      }
-
-      const styleSwitchResult = handleStyleSwitch(userMessage, conversationKey, hasTrigger);
-      if (styleSwitchResult.handled) {
-        const reply = styleSwitchResult.replyText || '角色風格設定已處理。';
-        await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
-        addToMemory(conversationKey, 'user', userMessage);
-        addToMemory(conversationKey, 'assistant', reply);
-        return;
-      }
-
-      const functionHelpResult = handleFunctionHelp(userMessage, hasTrigger, conversationKey);
-      if (functionHelpResult.handled) {
-        const reply = functionHelpResult.reply || '目前沒有找到這個功能的說明。';
-        await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
-        addToMemory(conversationKey, 'user', userMessage);
-        addToMemory(conversationKey, 'assistant', reply);
-        return;
-      }
-
-      try {
-        const voteContextId = event.source.type === 'group' ? event.source.groupId : event.source.type === 'user' ? event.source.userId : '';
-        if (voteContextId) {
-          const voteResult = await handleVoteMessage({ groupId: voteContextId, userId: event.source.userId || '', message: userMessage, generateOptions: generateVoteOptions });
-          if (voteResult.handled) {
-            const voteReply = voteResult.message || '投票狀態已更新。';
-            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: voteReply.slice(0, 5000) }] });
+          const locationRouteResult = await handleHomeRouteRequest(userMessage, event.source.userId || '');
+          if (locationRouteResult.handled) {
+            const locationRouteReply = locationRouteResult.replyText || (locationRouteResult.success ? buildStyleResponse('喳，奴才已取得回家的路程資訊。') : buildStyleResponse('喳，奴才目前無法取得這道位置資訊。'));
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: locationRouteReply.slice(0, 5000) }] });
             addToMemory(conversationKey, 'user', userMessage);
-            addToMemory(conversationKey, 'assistant', voteReply);
+            addToMemory(conversationKey, 'assistant', locationRouteReply);
             return;
           }
+        } catch (error) {
+          logError('Location Route 處理失敗', error);
+          try {
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。') }] });
+          } catch (fallbackError) {
+            logError('Location Route 備援回覆失敗', fallbackError);
+          }
+          return;
         }
-      } catch (error) {
-        logError('Vote 處理失敗', error);
-        try {
-          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: '投票功能目前無法處理這則訊息，請稍後再試。' }] });
-        } catch (fallbackError) {
-          logError('Vote 備援回覆失敗', fallbackError);
-        }
-        return;
-      }
 
-      try {
-        const reminderGroupId = event.source.type === 'group' ? event.source.groupId : loadFamilyGroupId();
-        if (reminderGroupId) {
-          const reminderResult = await handleReminderMessage(userMessage, event.source.userId || '', reminderGroupId, gemini, hasReminderInvocation(userMessage));
-          if (reminderResult.handled) {
-            const reminderReply = reminderResult.message || (reminderResult.created ? buildStyleResponse('已記下，奴才會依旨提醒。') : buildStyleResponse('喳，奴才已處理這道 Reminder。'));
-            const reminderMentionUserIds = event.source.type === 'group' ? reminderResult.mentionUserIds : [];
-            const reminderMentionAll = event.source.type === 'group' && reminderResult.mentionAll === true;
-            await sendReminderReply(event.replyToken, reminderReply, reminderMentionUserIds, reminderMentionAll);
+        try {
+          const locationIntentResult = handleLocationIntent(userMessage, event.source.userId || '');
+          if (locationIntentResult.handled) {
+            const canExecute = canExecuteLocationIntent(locationIntentResult);
+            let locationReply: string;
+
+            if (!canExecute && locationIntentResult.clarificationRequired) {
+              locationReply = locationIntentResult.clarificationMessage || buildStyleResponse('總管目前還缺少必要的位置資訊，請先提供目前位置或設定固定位置。');
+            } else if (canExecute && locationIntentResult.intent === 'CURRENT_LOCATION' && locationIntentResult.locationResolution?.location) {
+              const location = locationIntentResult.locationResolution.location;
+              locationReply = location.address ? `主上目前的位置是：${location.address}` : `主上目前的位置座標是：${location.latitude}, ${location.longitude}`;
+            } else if (canExecute && (locationIntentResult.intent === 'NEAR_CURRENT' || locationIntentResult.intent === 'NEAR_HOME') && locationIntentResult.action) {
+              try {
+                const placesResult = await handleLocationPlacesAction({
+                  action: locationIntentResult.action === 'SEARCH_NEAR_HOME' ? 'SEARCH_NEAR_HOME' : 'SEARCH_NEAR_CURRENT',
+                  message: userMessage,
+                  userId: event.source.userId || '',
+                });
+
+                if (!placesResult.success) {
+                  if (placesResult.reason === 'current-location-unknown') {
+                    locationReply = buildStyleResponse('喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。');
+                  } else if (placesResult.reason === 'home-location-unknown') {
+                    locationReply = buildStyleResponse('喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。');
+                  } else if (placesResult.reason === 'MISSING_API_KEY') {
+                    locationReply = buildStyleResponse('喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。');
+                  } else {
+                    locationReply = buildStyleResponse('喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。');
+                  }
+                } else {
+                  const places = placesResult.places || [];
+                  if (!places.length) {
+                    locationReply = buildStyleResponse('喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。');
+                  } else {
+                    const placeLines = places.slice(0, 10).map((place: any, index: number) => {
+                      const name = typeof place?.displayName === 'string' ? place.displayName : typeof place?.displayName?.text === 'string' ? place.displayName.text : typeof place?.name === 'string' ? place.name : '未命名店家';
+                      const address = typeof place?.formattedAddress === 'string' ? place.formattedAddress : typeof place?.address === 'string' ? place.address : '';
+                      const rating = typeof place?.rating === 'number' ? `｜評分 ${place.rating}` : '';
+                      const distance = typeof place?.distanceMeters === 'number' ? `｜約 ${Math.round(place.distanceMeters)} 公尺` : '';
+                      return `${index + 1}. ${name}${rating}${distance}${address ? `\n   ${address}` : ''}`;
+                    });
+                    const searchLabel = locationIntentResult.intent === 'NEAR_HOME' ? '固定家附近' : '目前位置附近';
+                    locationReply = buildStyleResponse(`喳，奴才已依照「${searchLabel}」的實際位置查到以下店家：\n\n`) + placeLines.join('\n\n');
+                  }
+                }
+              } catch (error) {
+                logError('Location Places Action 處理失敗', error);
+                locationReply = buildStyleResponse('喳，奴才已接到您的附近搜尋需求，但目前無法取得店家資料，請稍後再試。');
+              }
+            } else {
+              locationReply = locationIntentResult.clarificationMessage || buildStyleResponse('喳，奴才已接住這道位置需求，但目前還缺少可以執行的功能。');
+            }
+
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: locationReply.slice(0, 5000) }] });
             addToMemory(conversationKey, 'user', userMessage);
-            addToMemory(conversationKey, 'assistant', reminderReply);
+            addToMemory(conversationKey, 'assistant', locationReply);
             return;
           }
+        } catch (error) {
+          logError('Location Intent 處理失敗', error);
+          try {
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。') }] });
+          } catch (fallbackError) {
+            logError('Location Intent 備援回覆失敗', fallbackError);
+          }
+          return;
         }
-      } catch (error) {
-        logError('Reminder 處理失敗', error);
-        return;
-      }
 
-      try {
-        const familyMemoryRoute = routeFamilyMemoryMessage(userMessage, {
-          existingFunctionMatched: false,
-          actorUserId: event.source.userId || '',
-          integration: familyMemoryIntegration,
-        });
-        if (familyMemoryRoute.type === 'executed') {
-          const reply = buildStyleResponse(buildFamilyMemoryResponse(familyMemoryRoute.result));
+        if (hasTrigger && isCallNameHelpIntent(userMessage)) {
+          const reply = buildActiveCallNamesHelpMessage();
           await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
           addToMemory(conversationKey, 'user', userMessage);
           addToMemory(conversationKey, 'assistant', reply);
           return;
         }
-      } catch (error) {
-        logError('Family Memory 處理失敗', error);
-        try {
-          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道家庭記憶，請稍後再試。') }] });
-        } catch (fallbackError) {
-          logError('Family Memory 備援回覆失敗', fallbackError);
+
+        const styleSwitchResult = handleStyleSwitch(userMessage, conversationKey, hasTrigger);
+        if (styleSwitchResult.handled) {
+          const reply = styleSwitchResult.replyText || '角色風格設定已處理。';
+          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
+          addToMemory(conversationKey, 'user', userMessage);
+          addToMemory(conversationKey, 'assistant', reply);
+          return;
         }
-        return;
-      }
 
-      if (!shouldInvokeController) {
-        addToMemory(conversationKey, 'user', userMessage);
-        const targetId = event.source.type === 'group' ? event.source.groupId : event.source.userId;
-        if (!targetId) return;
-
-        console.log(`[ObserverRoute][${observerTraceId}] OBSERVER_ENTER elapsed=${Date.now() - eventReceivedAt}ms target=${targetId} replyRemaining=${Math.max(0, eventReceivedAt + 4500 - Date.now())}ms`);
-        observeMessage({
-          diagnosticTraceId: observerTraceId,
-          eventReceivedAt,
-          targetId,
-          userMessage,
-          replyToken: event.replyToken,
-          replyDeadlineAt: eventReceivedAt + 4500,
-          familyMember,
-          getConversationContext: () => buildConversationPrompt(getMemory(conversationKey), ''),
-          gemini,
-          lineClient,
-          onPassiveReply: (replyText) => addToMemory(conversationKey, 'assistant', replyText),
-        });
-        return;
-      }
-
-      try {
-        const cleanedMessage = hasTrigger ? cleanTriggerWords(userMessage) : userMessage.trim();
-        const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));
-        const resolvedFamilyTarget = wantsAll ? null : await resolveFamilyTarget(cleanedMessage, gemini);
-        const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;
-        const aiContext = createAiContext(event, familyMember, historyBeforeMessage, cleanedMessage || '有人在聊天中叫你，請自然地回應。');
-        const aiResult = await runAiCore({ geminiApiManager, context: aiContext });
-        const replyText = aiResult.text.trim();
-        await sendAiReply(event.replyToken, replyText, event.source.type === 'group' ? familyTarget : null);
-        addToMemory(conversationKey, 'user', userMessage);
-        addToMemory(conversationKey, 'assistant', replyText);
-      } catch (error) {
-        logError('主動呼叫總管失敗', error);
-        try {
-          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: getFallbackMessage(error) }] });
-        } catch (fallbackError) {
-          logError('LINE 備援回覆失敗', fallbackError);
+        const functionHelpResult = handleFunctionHelp(userMessage, hasTrigger, conversationKey);
+        if (functionHelpResult.handled) {
+          const reply = functionHelpResult.reply || '目前沒有找到這個功能的說明。';
+          await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
+          addToMemory(conversationKey, 'user', userMessage);
+          addToMemory(conversationKey, 'assistant', reply);
+          return;
         }
-      }
+
+        try {
+          const voteContextId = event.source.type === 'group' ? event.source.groupId : event.source.type === 'user' ? event.source.userId : '';
+          if (voteContextId) {
+            const voteResult = await handleVoteMessage({ groupId: voteContextId, userId: event.source.userId || '', message: userMessage, generateOptions: generateVoteOptions });
+            if (voteResult.handled) {
+              const voteReply = voteResult.message || '投票狀態已更新。';
+              await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: voteReply.slice(0, 5000) }] });
+              addToMemory(conversationKey, 'user', userMessage);
+              addToMemory(conversationKey, 'assistant', voteReply);
+              return;
+            }
+          }
+        } catch (error) {
+          logError('Vote 處理失敗', error);
+          try {
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: '投票功能目前無法處理這則訊息，請稍後再試。' }] });
+          } catch (fallbackError) {
+            logError('Vote 備援回覆失敗', fallbackError);
+          }
+          return;
+        }
+
+        try {
+          const reminderGroupId = event.source.type === 'group' ? event.source.groupId : loadFamilyGroupId();
+          if (reminderGroupId) {
+            const reminderInvocation = hasReminderInvocation(userMessage);
+            const reminderResult = await handleReminderMessage(userMessage, event.source.userId || '', reminderGroupId, gemini, reminderInvocation);
+            if (reminderResult.handled) {
+              const reminderReply = reminderResult.message || (reminderResult.created ? buildStyleResponse('已記下，奴才會依旨提醒。') : buildStyleResponse('喳，奴才已處理這道 Reminder。'));
+              const reminderMentionUserIds = event.source.type === 'group' ? reminderResult.mentionUserIds : [];
+              const reminderMentionAll = event.source.type === 'group' && reminderResult.mentionAll === true;
+              await sendReminderReply(event.replyToken, reminderReply, reminderMentionUserIds, reminderMentionAll);
+              addToMemory(conversationKey, 'user', userMessage);
+              addToMemory(conversationKey, 'assistant', reminderReply);
+              return;
+            }
+          }
+        } catch (error) {
+          logError('Reminder 處理失敗', error);
+          return;
+        }
+
+        try {
+          const familyMemoryRoute = routeFamilyMemoryMessage(userMessage, {
+            existingFunctionMatched: false,
+            actorUserId: event.source.userId || '',
+            integration: familyMemoryIntegration,
+          });
+          if (familyMemoryRoute.type === 'executed') {
+            const reply = buildStyleResponse(buildFamilyMemoryResponse(familyMemoryRoute.result));
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
+            addToMemory(conversationKey, 'user', userMessage);
+            addToMemory(conversationKey, 'assistant', reply);
+            return;
+          }
+        } catch (error) {
+          logError('Family Memory 處理失敗', error);
+          try {
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道家庭記憶，請稍後再試。') }] });
+          } catch (fallbackError) {
+            logError('Family Memory 備援回覆失敗', fallbackError);
+          }
+          return;
+        }
+
+        if (!shouldInvokeController) {
+          addToMemory(conversationKey, 'user', userMessage);
+          const targetId = event.source.type === 'group' ? event.source.groupId : event.source.userId;
+          if (!targetId) return;
+
+          console.log(`[ObserverRoute][${observerTraceId}] OBSERVER_ENTER elapsed=${Date.now() - eventReceivedAt}ms target=${targetId} replyRemaining=${Math.max(0, eventReceivedAt + 4500 - Date.now())}ms`);
+          observeMessage({
+            diagnosticTraceId: observerTraceId,
+            eventReceivedAt,
+            targetId,
+            userMessage,
+            replyToken: event.replyToken,
+            replyDeadlineAt: eventReceivedAt + 4500,
+            familyMember,
+            getConversationContext: () => buildConversationPrompt(getMemory(conversationKey), ''),
+            gemini,
+            lineClient,
+            onPassiveReply: (replyText) => addToMemory(conversationKey, 'assistant', replyText),
+          });
+          return;
+        }
+
+        try {
+          const cleanedMessage = hasTrigger ? cleanTriggerWords(userMessage) : userMessage.trim();
+          const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));
+          const resolvedFamilyTarget = wantsAll ? null : await resolveFamilyTarget(cleanedMessage, gemini);
+          const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;
+          const aiContext = createAiContext(event, familyMember, historyBeforeMessage, cleanedMessage || '有人在聊天中叫你，請自然地回應。');
+          const aiResult = await runAiCore({ geminiApiManager, context: aiContext });
+          const replyText = aiResult.text.trim();
+          await sendAiReply(event.replyToken, replyText, event.source.type === 'group' ? familyTarget : null);
+          addToMemory(conversationKey, 'user', userMessage);
+          addToMemory(conversationKey, 'assistant', replyText);
+        } catch (error) {
+          logError('主動呼叫總管失敗', error);
+          try {
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: getFallbackMessage(error) }] });
+          } catch (fallbackError) {
+            logError('LINE 備援回覆失敗', fallbackError);
+          }
+        }
       });
     }));
   } catch (error) {
@@ -658,8 +659,7 @@ async function sendAiReply(
     messages: [{
       type: 'textV2',
       text: `{target} ${safeReply}`,
-      substitution: { target: { type: 'mention', mentionee: { type: 'user', userId: familyTarget.userId },
-      },
+      substitution: { target: { type: 'mention', mentionee: { type: 'user', userId: familyTarget.userId } },
     }],
   });
 }
