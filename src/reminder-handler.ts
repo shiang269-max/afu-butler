@@ -3724,6 +3724,14 @@ export async function handleReminderMessage(
     return { handled: false };
   }
 
+  /* 單獨說「提醒」只有意圖，沒有可解析的 Reminder 操作；直接請使用者補充，避免無意義呼叫 Gemini。 */
+  if (normalizedMessage === '提醒') {
+    return {
+      handled: true,
+      message: buildReminderResponse('主上，您要提醒什麼？請告訴奴才時間與內容。'),
+    };
+  }
+
   const pending =
     getPendingReminderState(conversationKey);
 
