@@ -513,15 +513,17 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
           const reminderGroupId = event.source.type === 'group' ? event.source.groupId : loadFamilyGroupId();
           if (reminderGroupId) {
             const reminderInvocation = hasReminderInvocation(userMessage);
-            const reminderResult = await handleReminderMessage(userMessage, event.source.userId || '', reminderGroupId, gemini, reminderInvocation);
-            if (reminderResult.handled) {
-              const reminderReply = reminderResult.message || (reminderResult.created ? buildStyleResponse('已記下，奴才會依旨提醒。') : buildStyleResponse('喳，奴才已處理這道 Reminder。'));
-              const reminderMentionUserIds = event.source.type === 'group' ? reminderResult.mentionUserIds : [];
-              const reminderMentionAll = event.source.type === 'group' && reminderResult.mentionAll === true;
-              await sendReminderReply(event.replyToken, reminderReply, reminderMentionUserIds, reminderMentionAll);
-              addToMemory(conversationKey, 'user', userMessage);
-              addToMemory(conversationKey, 'assistant', reminderReply);
-              return;
+            if (reminderInvocation) {
+              const reminderResult = await handleReminderMessage(userMessage, event.source.userId || '', reminderGroupId, gemini, true);
+              if (reminderResult.handled) {
+                const reminderReply = reminderResult.message || (reminderResult.created ? buildStyleResponse('已記下，奴才會依旨提醒。') : buildStyleResponse('喳，奴才已處理這道 Reminder。'));
+                const reminderMentionUserIds = event.source.type === 'group' ? reminderResult.mentionUserIds : [];
+                const reminderMentionAll = event.source.type === 'group' && reminderResult.mentionAll === true;
+                await sendReminderReply(event.replyToken, reminderReply, reminderMentionUserIds, reminderMentionAll);
+                addToMemory(conversationKey, 'user', userMessage);
+                addToMemory(conversationKey, 'assistant', reminderReply);
+                return;
+              }
             }
           }
         } catch (error) {
