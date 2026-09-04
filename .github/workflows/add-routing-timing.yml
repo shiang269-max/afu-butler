@@ -1,0 +1,55 @@
+name: Diagnose routing timing
+
+on:
+  push:
+    branches: [reminder-tested-c2]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: reminder-tested-c2
+      - name: Patch timing logs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/index.ts')
+          s = p.read_text(encoding='utf-8')
+          old = """      const conversationKey = getConversationKey(event);\n      return enqueueConversationTask(conversationKey, async () => {\n        const historyBeforeMessage = getMemory(conversationKey);\n"""
+          new = """      const conversationKey = getConversationKey(event);\n      const routeReceivedAt = Date.now();\n      console.log(`[RouteTiming] QUEUE_ENTER key=${conversationKey} elapsed=0ms message=${JSON.stringify(userMessage)}`);\n      return enqueueConversationTask(conversationKey, async () => {\n        console.log(`[RouteTiming] QUEUE_START key=${conversationKey} wait=${Date.now() - routeReceivedAt}ms`);\n        const historyBeforeMessage = getMemory(conversationKey);\n"""
+          if old not in s:
+              raise SystemExit('QUEUE anchor not found')
+          s = s.replace(old, new, 1)
+          old = """        try {\n          const reminderGroupId = event.source.type === 'group' ? event.source.groupId : loadFamilyGroupId();\n          if (reminderGroupId) {\n            const reminderResult = await handleReminderMessage(userMessage, event.source.userId || '', reminderGroupId, gemini, hasReminderInvocation(userMessage));\n"""
+          new = """        try {\n          const stageStartedAt = Date.now();\n          const reminderGroupId = event.source.type === 'group' ? event.source.groupId : loadFamilyGroupId();\n          if (reminderGroupId) {\n            const reminderResult = await handleReminderMessage(userMessage, event.source.userId || '', reminderGroupId, gemini, hasReminderInvocation(userMessage));\n            console.log(`[RouteTiming] REMINDER_DONE elapsed=${Date.now() - stageStartedAt}ms total=${Date.now() - routeReceivedAt}ms`);\n"""
+          if old not in s:
+              raise SystemExit('REMINDER anchor not found')
+          s = s.replace(old, new, 1)
+          old = """        try {\n          const familyMemoryRoute = routeFamilyMemoryMessage(userMessage, {\n"""
+          new = """        try {\n          const stageStartedAt = Date.now();\n          const familyMemoryRoute = routeFamilyMemoryMessage(userMessage, {\n"""
+          if old not in s:
+              raise SystemExit('MEMORY anchor not found')
+          s = s.replace(old, new, 1)
+          old = """          if (familyMemoryRoute.type === 'executed') {\n"""
+          new = """          console.log(`[RouteTiming] MEMORY_DONE elapsed=${Date.now() - stageStartedAt}ms total=${Date.now() - routeReceivedAt}ms type=${familyMemoryRoute.type}`);\n          if (familyMemoryRoute.type === 'executed') {\n"""
+          if old not in s:
+              raise SystemExit('MEMORY_DONE anchor not found')
+          s = s.replace(old, new, 1)
+          old = """          const aiResult = await runAiCore({ geminiApiManager, context: aiContext });\n          const replyText = aiResult.text.trim();\n          await sendAiReply(event.replyToken, replyText, event.source.type === 'group' ? familyTarget : null);\n"""
+          new = """          console.log(`[RouteTiming] PRE_AI elapsed=${Date.now() - routeReceivedAt}ms`);\n          const aiStartedAt = Date.now();\n          const aiResult = await runAiCore({ geminiApiManager, context: aiContext });\n          console.log(`[RouteTiming] AI_DONE elapsed=${Date.now() - aiStartedAt}ms total=${Date.now() - routeReceivedAt}ms`);\n          const replyText = aiResult.text.trim();\n          const replyStartedAt = Date.now();\n          await sendAiReply(event.replyToken, replyText, event.source.type === 'group' ? familyTarget : null);\n          console.log(`[RouteTiming] REPLY_DONE elapsed=${Date.now() - replyStartedAt}ms total=${Date.now() - routeReceivedAt}ms`);\n"""
+          if old not in s:
+              raise SystemExit('AI anchor not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+          git diff -- src/index.ts
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/index.ts
+          git commit -m '加入訊息路由延遲診斷' || exit 0
+          git push origin reminder-tested-c2
