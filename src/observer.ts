@@ -28,6 +28,7 @@ interface ObserverState {
 
   generalTimer?: TimerHandle;
   generalGeneration: number;
+  generalInFlight?: boolean;
 
   greetingType?: '早安' | '晚安';
   greetingLastSeenAt?: number;
@@ -291,6 +292,8 @@ function handleGeneral(options: ObserveOptions, state: ObserverState): void {
     return;
   }
 
+  if (state.generalInFlight) return;
+
   if (state.generalTimer) {
     clearTimeout(state.generalTimer);
   }
@@ -313,12 +316,17 @@ function handleGeneral(options: ObserveOptions, state: ObserverState): void {
     if (isObserverMuted(state)) return;
 
     state.meaningfulSinceDecision = 0;
+    state.generalInFlight = true;
 
-    await generateAndReplyPassive({
-      ...options,
-      mode: 'general',
-      fallback: '',
-    });
+    try {
+      await generateAndReplyPassive({
+        ...options,
+        mode: 'general',
+        fallback: '',
+      });
+    } finally {
+      state.generalInFlight = false;
+    }
   }, GENERAL_DEBOUNCE_MS);
 }
 
