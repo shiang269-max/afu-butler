@@ -19,15 +19,38 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
           p = Path('src/index.ts')
           s = p.read_text(encoding='utf-8')
-          old = """          const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));\n          const resolvedFamilyTarget = wantsAll ? null : await resolveFamilyTarget(cleanedMessage, gemini);\n          const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;\n"""
-          new = """          const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));\n          const hasFamilyTargetIntent = FAMILY_TARGET_ACTION_WORDS.some((word) => cleanedMessage.includes(word));\n          const shouldResolveFamilyTarget = wantsAll || hasFamilyTargetIntent;\n          const resolvedFamilyTarget = shouldResolveFamilyTarget && !wantsAll\n            ? await resolveFamilyTarget(cleanedMessage, gemini)\n            : null;\n          const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;\n"""
-          if old not in s:
-              raise SystemExit('target block not found')
-          if 'const FAMILY_TARGET_ACTION_WORDS' not in s:
-              raise SystemExit('FAMILY_TARGET_ACTION_WORDS not found')
-          s = s.replace(old, new, 1)
+          pattern = re.compile(r"(?m)^\s*const wantsAll = ALL_TARGET_WORDS\.some\(\(word\) => cleanedMessage\.includes\(word\)\);\n\s*const resolvedFamilyTarget = wantsAll \? null : await resolveFamilyTarget\(cleanedMessage, gemini\);\n\s*const familyTarget = wantsAll \? \{ type: 'all' as const \} : resolvedFamilyTarget \? \{ type: 'user' as const, \.\.\.resolvedFamilyTarget \} : null;\n")
+          replacement = """          const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));
+          const hasFamilyTargetIntent = hasFamilyTargetIntentForResolver(cleanedMessage);
+          const resolvedFamilyTarget = wantsAll || !hasFamilyTargetIntent
+            ? null
+            : await resolveFamilyTarget(cleanedMessage, gemini);
+          const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;
+"""
+          if not pattern.search(s):
+              raise SystemExit('resolver block not found')
+          s = pattern.sub(replacement, s, count=1)
+          helper = """
+function hasFamilyTargetIntentForResolver(message: string): boolean {
+  const text = message.trim();
+  if (!text) return false;
+  const hasKnownFamilyMember = Object.values(FAMILY_MEMBERS).some((member: any) => {
+    const identity = typeof member?.identity === 'string' ? member.identity : '';
+    const mentionName = typeof member?.mentionName === 'string' ? member.mentionName : '';
+    return (identity && text.includes(identity)) || (mentionName && text.includes(mentionName));
+  });
+  if (hasKnownFamilyMember) return true;
+  return FAMILY_TARGET_ACTION_WORDS.some((word) => text.includes(word));
+}
+"""
+          marker = "function hasReminderInvocation(message: string): boolean {"
+          if 'function hasFamilyTargetIntentForResolver' not in s:
+              if marker not in s:
+                  raise SystemExit('insert marker not found')
+              s = s.replace(marker, helper + "\n" + marker, 1)
           p.write_text(s, encoding='utf-8')
           PY
       - name: Verify build
