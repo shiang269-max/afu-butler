@@ -3834,8 +3834,7 @@ export async function handleReminderMessage(
    * 此時完全不使用舊 Pending State，避免兩套指令規則互相卡住。
    */
   const hasReminderIntent =
-    mayBeReminder(normalizedMessage) ||
-    normalizedMessage.length > 0;
+    mayBeReminder(normalizedMessage);
 
   if (hasReminderIntent) {
     let parsed: ReminderParseResult;
