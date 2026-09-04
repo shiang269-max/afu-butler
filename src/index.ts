@@ -115,6 +115,9 @@ import {
   buildFamilyMemoryResponse,
 } from './family-memory-response';
 
+import { enqueueConversationTask } from './conversation-queue';
+import { claimWebhookEvent } from './webhook-event-dedup';
+
 /**
  * =========================================================
  * 環境設定
@@ -286,9 +289,12 @@ app.get('/', (_req, res) => {
 
 app.post('/webhook', lineMiddleware, async (req, res) => {
   const events = req.body.events;
+  res.sendStatus(200);
 
   try {
     await Promise.all(events.map(async (event: any) => {
+      if (!claimWebhookEvent(event.webhookEventId)) return;
+
       const eventReceivedAt = Date.now();
       const observerTraceId = `evt-${eventReceivedAt}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -323,6 +329,7 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
       }
 
       const conversationKey = getConversationKey(event);
+      return enqueueConversationTask(conversationKey, async () => {
       const historyBeforeMessage = getMemory(conversationKey);
       const hasTrigger = hasCallName(userMessage);
       const hasTargetIntent = hasFamilyTargetIntent(userMessage);
@@ -585,12 +592,10 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
           logError('LINE 備援回覆失敗', fallbackError);
         }
       }
+      });
     }));
-
-    res.sendStatus(200);
   } catch (error) {
     logError('Webhook error', error);
-    res.sendStatus(500);
   }
 });
 
@@ -653,7 +658,7 @@ async function sendAiReply(
     messages: [{
       type: 'textV2',
       text: `{target} ${safeReply}`,
-      substitution: { target: { type: 'mention', mentionee: { type: 'user', userId: familyTarget.userId } },
+      substitution: { target: { type: 'mention', mentionee: { type: 'user', userId: familyTarget.userId },
       },
     }],
   });
