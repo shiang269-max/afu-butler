@@ -489,6 +489,9 @@ ${toolInstruction}
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
+        thinkingConfig: {
+          thinkingLevel: 'minimal',
+        },
         ...(googleSearchTools.length > 0 ? { tools: googleSearchTools } : {}),
       },
     });
