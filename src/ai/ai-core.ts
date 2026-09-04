@@ -1,4 +1,9 @@
 import {
+  GoogleGenAI,
+  ThinkingLevel,
+} from '@google/genai';
+
+import {
   SYSTEM_INSTRUCTION,
 } from '../persona';
 
@@ -490,7 +495,7 @@ ${toolInstruction}
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         thinkingConfig: {
-          thinkingLevel: 'minimal',
+          thinkingLevel: ThinkingLevel.MINIMAL,
         },
         ...(googleSearchTools.length > 0 ? { tools: googleSearchTools } : {}),
       },
