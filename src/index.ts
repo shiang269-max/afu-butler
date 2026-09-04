@@ -576,7 +576,10 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
         try {
           const cleanedMessage = hasTrigger ? cleanTriggerWords(userMessage) : userMessage.trim();
           const wantsAll = ALL_TARGET_WORDS.some((word) => cleanedMessage.includes(word));
-          const resolvedFamilyTarget = wantsAll ? null : await resolveFamilyTarget(cleanedMessage, gemini);
+          const shouldResolveFamilyTarget = wantsAll || hasFamilyTargetIntent(cleanedMessage);
+          const resolvedFamilyTarget = shouldResolveFamilyTarget && !wantsAll
+            ? await resolveFamilyTarget(cleanedMessage, gemini)
+            : null;
           const familyTarget = wantsAll ? { type: 'all' as const } : resolvedFamilyTarget ? { type: 'user' as const, ...resolvedFamilyTarget } : null;
           const aiContext = createAiContext(event, familyMember, historyBeforeMessage, cleanedMessage || '有人在聊天中叫你，請自然地回應。');
           const aiResult = await runAiCore({ geminiApiManager, context: aiContext });
