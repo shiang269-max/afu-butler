@@ -442,6 +442,9 @@ REPLY: 你的短句
 
     if (!isReplyWindowOpen(replyDeadlineAt)) return;
 
+    const latestState = getState(targetId);
+    if (isObserverMuted(latestState)) return;
+
     let replyText = response.text?.trim() || '';
 
     if (
@@ -470,6 +473,7 @@ REPLY: 你的短句
     if (!replyText) return;
 
     if (!isReplyWindowOpen(replyDeadlineAt)) return;
+    if (isObserverMuted(latestState)) return;
 
     await lineClient.replyMessage({
       replyToken,
@@ -482,10 +486,10 @@ REPLY: 你的短句
     });
 
     onPassiveReply(replyText);
-    currentState.lastPassiveReplyAt = Date.now();
+    latestState.lastPassiveReplyAt = Date.now();
 
     if (mode === 'greeting_morning' || mode === 'greeting_night') {
-      currentState.greetingLastSeenAt = Date.now();
+      latestState.greetingLastSeenAt = Date.now();
     }
   } catch (error) {
     console.error(
@@ -521,104 +525,56 @@ function buildObserverInstruction(mode: ObserverMode): string {
 
     case 'food':
       return `
-這是一段吃飯相關的對話。
+這是在談吃飯、食物或餐點。
 
-不要回答「大家要吃什麼」這種本來應該由家人決定的問題。
+不要搶著回答家人正在問彼此的問題。
 
-像旁邊聽到聊天的第五個家庭成員，稍微等過之後自然補一句。
-
-可以接梗、幽默、表達自己也想吃，或用總管身份開一個很短的玩笑。
-
-如果真的沒什麼好說，可以非常短。
+只在適合時補一句旁邊人的自然反應。
       `.trim();
 
     case 'daily':
       return `
-這是一句家庭成員的日常狀態。
+這是在談今天的身體狀態、疲累、忙碌、心情或日常。
 
-例如：累、冷、熱、下雨、放假、回家、下班、心情好或不好。
-
-這種情況適合讓家人感覺「有人接住」。
-
-請快速給一句很短、自然、溫暖或幽默的回應。
-
-不要分析。
+如果適合，可以自然關心一句。
       `.trim();
 
     case 'general':
       return `
-這是一段一般家庭聊天。
+這是家庭對話中的一般內容。
 
-請判斷：「現在加入一句話，會不會讓這段對話更自然、更有趣？」
+只有真的適合插話時才回應。
 
-不是每段對話都值得插話。
-
-如果只是正常問答、資訊交換、簡單確認，通常保持安靜。
-
-如果出現：
-- 明顯笑點
-- 很適合吐槽的情境
-- 大家陷入有趣的僵局
-- 某人說了很有個人特色的話
-- 可以用一句話增加家庭氣氛
-- 總管突然加入反而很好笑
-
-才考慮插一句。
-
-寧可不說，也不要為了存在感硬插。
+如果沒有必要加入，請輸出 NO_REPLY。
       `.trim();
   }
 }
 
 function isLowInformation(text: string): boolean {
-  const normalized = text
-    .trim()
-    .replace(/[。！!？?，,。.～~]+$/g, '')
-    .trim();
-
-  const lowInformation = new Set([
-    '嗯', '嗯嗯', '嗯嗯嗯', '恩', '恩恩', '喔', '哦', '哦哦',
-    '好', '好喔', '好哦', '好啊', '行', '可以', '收到', '知道了',
-    '了解', '在', '對', '是', '不是', '沒事', '沒問題',
-  ]);
-
-  if (lowInformation.has(normalized)) return true;
-  if (/^[\s\p{P}\p{S}]+$/u.test(text)) return true;
-  return false;
+  return /^(嗯+|喔+|哦+|噢+|好+|行+|可以|收到|知道了|了解|ok|OK|👍|哈哈+)$/.test(
+    text.replace(/[，。！？、,.!?～~\s]/g, ''),
+  );
 }
 
 function isGreeting(text: string): boolean {
-  const normalized = text
-    .trim()
-    .replace(/[！!。,.，、～~\s]/g, '');
-
-  return [
-    '早安', '早', '晚安', '晚', '睡了', '先睡了', '我睡了', '去睡了', '先睡',
-  ].includes(normalized);
+  const normalized = text.replace(/[，。！？、,.!?～~\s]/g, '');
+  return /^(早安|早|晚安|晚)$/.test(normalized);
 }
 
 function isAskingOthersWhatToEat(text: string): boolean {
-  return /要吃什麼|吃什麼|吃哪個|吃哪家|哪裡吃|吃哪間/.test(text);
+  return /(?:吃什麼|吃啥|要吃什麼|想吃什麼|晚餐吃|午餐吃|早餐吃|宵夜吃)/.test(text);
 }
 
 function isFoodRelated(text: string): boolean {
-  return /吃飯了嗎|吃了嗎|吃飯|吃飽|晚餐|宵夜|消夜|早餐|午餐|好餓|餓了|吃東西|去吃飯/.test(text);
+  return /(?:吃飯|吃東西|晚餐|午餐|早餐|宵夜|火鍋|便當|麵|飯|菜|餐廳|外送|餓|肚子)/.test(text);
+}
+
+function isDailyState(text: string): boolean {
+  return /(?:累|疲|忙|睡|醒|起床|回家|下班|上班|心情|開心|難過|生氣|不舒服|舒服|頭痛|肚子痛)/.test(text);
 }
 
 function normalizeDailyKey(text: string): string {
   return text
-    .trim()
-    .replace(/[，。！？、,.!?～~\s]+/g, '');
-}
-
-function isDailyState(text: string): boolean {
-  const patterns = [
-    /好累/, /累死/, /累爆/, /很累/, /超累/, /好睏/, /很睏/, /想睡/, /睡不著/,
-    /好冷/, /很冷/, /冷死/, /好熱/, /很熱/, /熱死/, /下雨/, /下雨了/, /放假/,
-    /休假/, /回家了/, /到家了/, /回來了/, /下班/, /出門了/, /出發了/, /出門/,
-    /到公司了/, /到公司/, /心情不好/, /心情很差/, /心情不錯/, /心情很好/,
-    /心情好/, /有人嗎/, /大家在幹嘛/, /你們在幹嘛/, /今天好/, /今天超/,
-  ];
-
-  return patterns.some((pattern) => pattern.test(text));
+    .replace(/[，。！？、,.!?～~\s]/g, '')
+    .toLowerCase();
 }
