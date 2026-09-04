@@ -658,7 +658,12 @@ async function sendAiReply(
     messages: [{
       type: 'textV2',
       text: `{target} ${safeReply}`,
-      substitution: { target: { type: 'mention', mentionee: { type: 'user', userId: familyTarget.userId } },
+      substitution: {
+        target: {
+          type: 'mention',
+          mentionee: { type: 'user', userId: familyTarget.userId },
+        },
+      },
     }],
   });
 }
