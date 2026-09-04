@@ -1,0 +1,14 @@
+name: trigger resolver optimization
+on:
+  push:
+    branches: [reminder-tested-c2]
+permissions:
+  contents: write
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          grep -n "function hasFamilyTargetIntent" src/index.ts || true
+          grep -n "const resolvedFamilyTarget" src/index.ts | tail -3
