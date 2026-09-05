@@ -14,6 +14,7 @@ interface GeminiKeyState {
 }
 
 const KEY_COOLDOWN_MS = 60_000;
+const GEMINI_REQUEST_TIMEOUT_MS = 15_000;
 
 function isKeyRelatedError(error: unknown): boolean {
   const record =
@@ -118,6 +119,10 @@ class GeminiApiManager {
             new GoogleGenAI({
               apiKey:
                 config.apiKey,
+              httpOptions: {
+                timeout:
+                  GEMINI_REQUEST_TIMEOUT_MS,
+              },
             }),
           failedUntil:
             0,
