@@ -89,6 +89,9 @@ let quotaCache:
     expiresAt: number;
   } | null = null;
 
+let quotaFetchInFlight:
+  Promise<LineQuotaSnapshot> | null = null;
+
 
 const QUOTA_CACHE_MS =
   5 * 1000;
@@ -114,6 +117,27 @@ export async function getQuotaSnapshot(
   ) {
     return quotaCache.snapshot;
   }
+
+  if (quotaFetchInFlight) {
+    return quotaFetchInFlight;
+  }
+
+  quotaFetchInFlight = fetchQuotaSnapshot(lineClient);
+
+  try {
+    return await quotaFetchInFlight;
+  } finally {
+    quotaFetchInFlight = null;
+  }
+}
+
+
+async function fetchQuotaSnapshot(
+  lineClient:
+    messagingApi.MessagingApiClient,
+): Promise<LineQuotaSnapshot> {
+  const now =
+    Date.now();
 
   const [
     quota,
