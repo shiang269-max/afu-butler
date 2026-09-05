@@ -29,20 +29,16 @@ interface ObserverState {
 
   generalTimer?: TimerHandle;
   generalGeneration: number;
-  generalInFlight?: boolean;
+  observerInFlight?: boolean;
 
   greetingType?: '早安' | '晚安';
   greetingLastSeenAt?: number;
 
   foodLastSeenAt?: number;
-  foodInFlight?: boolean;
-
   dailyLastReplyAt?: number;
   dailyLastKey?: string;
   dailyLastAt?: number;
-  dailyInFlight?: boolean;
   mutedUntil?: number;
-  greetingInFlight?: boolean;
 }
 
 interface ObserveOptions {
@@ -229,16 +225,16 @@ function handleGreeting(options: ObserveOptions, state: ObserverState): void {
     return;
   }
 
-  if (state.greetingInFlight) return;
+  if (state.observerInFlight) return;
 
-  state.greetingInFlight = true;
+  state.observerInFlight = true;
 
   void generateAndReplyPassive({
     ...options,
     mode: type === '早安' ? 'greeting_morning' : 'greeting_night',
     fallback: type === '早安' ? '早，諸位主子。' : '晚安，諸位主子。',
   }).finally(() => {
-    state.greetingInFlight = false;
+    state.observerInFlight = false;
   });
 }
 
@@ -253,16 +249,16 @@ function handleFood(options: ObserveOptions, state: ObserverState): void {
     return;
   }
 
-  if (state.foodInFlight) return;
+  if (state.observerInFlight) return;
 
-  state.foodInFlight = true;
+  state.observerInFlight = true;
 
   void generateAndReplyPassive({
     ...options,
     mode: 'food',
     fallback: '奴才也想吃。',
   }).finally(() => {
-    state.foodInFlight = false;
+    state.observerInFlight = false;
   });
 }
 
@@ -278,18 +274,18 @@ function handleDaily(options: ObserveOptions, state: ObserverState): void {
     return;
   }
 
-  if (state.dailyInFlight) return;
+  if (state.observerInFlight) return;
 
   state.dailyLastKey = dailyKey;
   state.dailyLastAt = now;
-  state.dailyInFlight = true;
+  state.observerInFlight = true;
 
   void generateAndReplyPassive({
     ...options,
     mode: 'daily',
     fallback: '喳，奴才收到。',
   }).finally(() => {
-    state.dailyInFlight = false;
+    state.observerInFlight = false;
   });
 }
 
@@ -305,7 +301,7 @@ function handleGeneral(options: ObserveOptions, state: ObserverState): void {
     return;
   }
 
-  if (state.generalInFlight) return;
+  if (state.observerInFlight) return;
 
   if (state.generalTimer) {
     clearTimeout(state.generalTimer);
@@ -328,9 +324,10 @@ function handleGeneral(options: ObserveOptions, state: ObserverState): void {
     }
 
     if (isObserverMuted(state)) return;
+    if (state.observerInFlight) return;
 
     state.meaningfulSinceDecision = 0;
-    state.generalInFlight = true;
+    state.observerInFlight = true;
 
     try {
       await generateAndReplyPassive({
@@ -339,7 +336,7 @@ function handleGeneral(options: ObserveOptions, state: ObserverState): void {
         fallback: '',
       });
     } finally {
-      state.generalInFlight = false;
+      state.observerInFlight = false;
     }
   }, GENERAL_DEBOUNCE_MS);
 }
