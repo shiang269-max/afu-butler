@@ -1,0 +1,42 @@
+name: Patch AI prompt diagnostic
+
+on:
+  push:
+    branches:
+      - reminder-tested-c2
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != '加入 AI Prompt 大小診斷'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: reminder-tested-c2
+
+      - name: Add prompt size diagnostics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/ai/ai-core.ts')
+          s = p.read_text(encoding='utf-8')
+          old = "  console.log('[AI Core Debug] 開始呼叫 Gemini');"
+          new = """  console.log(
+    `[AI Prompt Debug] promptChars=${prompt.length} contextChars=${contextPrompt.length} familyMemoryChars=${familyMemoryPrompt.length} systemChars=${SYSTEM_INSTRUCTION.length}`,
+  );
+
+  console.log('[AI Core Debug] 開始呼叫 Gemini');"""
+          if old not in s:
+              raise SystemExit('AI Core debug anchor not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Commit and push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/ai/ai-core.ts
+          git commit -m '加入 AI Prompt 大小診斷'
+          git push origin reminder-tested-c2
