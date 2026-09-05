@@ -76,6 +76,9 @@ ${message}
 `,
     config: {
       temperature: 0,
+      httpOptions: {
+        timeout: 15_000,
+      },
     },
   });
 
