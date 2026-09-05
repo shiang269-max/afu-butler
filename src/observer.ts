@@ -25,6 +25,7 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 interface ObserverState {
   lastPassiveReplyAt: number;
   meaningfulSinceDecision: number;
+  latestEventReceivedAt?: number;
 
   generalTimer?: TimerHandle;
   generalGeneration: number;
@@ -121,6 +122,11 @@ function isReplyWindowOpen(replyDeadlineAt: number): boolean {
   return Date.now() < replyDeadlineAt;
 }
 
+function isLatestObserverEvent(state: ObserverState, eventReceivedAt?: number): boolean {
+  if (eventReceivedAt === undefined) return true;
+  return state.latestEventReceivedAt === eventReceivedAt;
+}
+
 export function observeMessage(options: ObserveOptions): void {
   const traceId =
     options.diagnosticTraceId ||
@@ -137,6 +143,13 @@ export function observeMessage(options: ObserveOptions): void {
 
   const { targetId, userMessage } = options;
   const state = getState(targetId);
+
+  if (options.eventReceivedAt !== undefined) {
+    state.latestEventReceivedAt = Math.max(
+      state.latestEventReceivedAt || 0,
+      options.eventReceivedAt,
+    );
+  }
 
   if (isObserverMuted(state)) {
     console.log(`[Observer][${traceId}] SKIP reason=muted elapsed=${elapsed()}ms`);
@@ -303,6 +316,7 @@ function handleGeneral(options: ObserveOptions, state: ObserverState): void {
 
   state.generalTimer = setTimeout(async () => {
     if (state.generalGeneration !== generation) return;
+    if (!isLatestObserverEvent(state, options.eventReceivedAt)) return;
 
     state.generalTimer = undefined;
 
@@ -366,6 +380,7 @@ async function generateAndReplyPassive(
   try {
     const currentState = getState(targetId);
 
+    if (!isLatestObserverEvent(currentState, options.eventReceivedAt)) return;
     if (isObserverMuted(currentState)) return;
     if (!isReplyWindowOpen(replyDeadlineAt)) return;
 
@@ -443,6 +458,10 @@ REPLY: 你的短句
     if (!isReplyWindowOpen(replyDeadlineAt)) return;
 
     const latestState = getState(targetId);
+    if (!isLatestObserverEvent(latestState, options.eventReceivedAt)) {
+      console.log(`[Observer][${traceId}] SKIP reason=stale-event elapsed=${elapsed()}ms`);
+      return;
+    }
     if (isObserverMuted(latestState)) return;
 
     let replyText = response.text?.trim() || '';
@@ -473,6 +492,10 @@ REPLY: 你的短句
     if (!replyText) return;
 
     if (!isReplyWindowOpen(replyDeadlineAt)) return;
+    if (!isLatestObserverEvent(latestState, options.eventReceivedAt)) {
+      console.log(`[Observer][${traceId}] SKIP reason=stale-event-before-reply elapsed=${elapsed()}ms`);
+      return;
+    }
     if (isObserverMuted(latestState)) return;
 
     await lineClient.replyMessage({
