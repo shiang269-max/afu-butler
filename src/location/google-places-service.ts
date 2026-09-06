@@ -1413,6 +1413,10 @@ const hasQuery =
       )
     ) {
 
+      clearTimeout(
+        timeout,
+      );
+
       return {
         ok: false,
 
