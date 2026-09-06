@@ -623,15 +623,17 @@ async function parseReminderWithTimeout(
   gemini: GoogleGenAI,
 ): Promise<ReminderParseResult> {
   const timeoutMs = 20_000;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
 
-  return Promise.race([
+  try {
+    return await Promise.race([
     parseReminder(
       message,
       gemini,
     ),
     new Promise<ReminderParseResult>(
       (_, reject) => {
-        setTimeout(
+        timeout = setTimeout(
           () =>
             reject(
               new Error(
@@ -642,7 +644,10 @@ async function parseReminderWithTimeout(
         );
       },
     ),
-  ]);
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function parseReminder(
@@ -655,7 +660,10 @@ async function parseReminder(
       message,
       getTaipeiCurrentTime(),
     ),
-    config: { temperature: 0 },
+    config: {
+      temperature: 0,
+      httpOptions: { timeout: 15_000 },
+    },
   });
 
   const text = response.text?.trim();
