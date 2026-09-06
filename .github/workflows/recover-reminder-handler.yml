@@ -1,0 +1,26 @@
+name: Recover Reminder Handler
+
+on:
+  push:
+    branches: [reminder-tested-c2]
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    if: github.event.head_commit.message == '修正 Reminder Gemini 請求逾時未終止'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore and remove recovery workflow
+        run: |
+          git restore --source=34f8243e0eff0d766927593daa47129faff27c7a -- src/reminder-handler.ts
+          git rm .github/workflows/recover-reminder-handler.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/reminder-handler.ts
+          git commit -m "恢復 Reminder Handler 原始版本"
+          git push
