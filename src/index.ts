@@ -5,167 +5,32 @@ import * as dotenv from 'dotenv';
 
 import { SYSTEM_INSTRUCTION } from './persona';
 import { FAMILY_MEMBERS } from './family';
-
-import {
-  getActiveCallNames,
-  hasCallName,
-  cleanCallNames,
-  isCallNameHelpIntent,
-  buildActiveCallNamesHelpMessage,
-} from './call-names';
-
-import {
-  handleVoteMessage,
-} from './vote-handler';
+import { getActiveCallNames, hasCallName, cleanCallNames, isCallNameHelpIntent, buildActiveCallNamesHelpMessage } from './call-names';
+import { handleVoteMessage } from './vote-handler';
 import { resolveFamilyTarget } from './family-resolver';
-
-import {
-  handleFunctionHelp,
-} from './function-help';
-
-import {
-  handleStyleSwitch,
-} from './style-switch';
-
-import {
-  handleReminderMessage,
-} from './reminder-handler';
-
-import {
-  loadFamilyGroupId,
-} from './family-group-state';
-
-import {
-  startProactiveScheduler,
-  recordFamilyGroupMessage,
-} from './proactive-scheduler';
-
-import {
-  addToMemory,
-  buildConversationPrompt,
-  getConversationKey,
-  getMemory,
-} from './memory';
-
-import {
-  observeMessage,
-  invalidateObserver,
-  isObserverMuteCommand,
-  isObserverUnmuteCommand,
-  muteObserver,
-  unmuteObserver,
-} from './observer';
-
-import {
-  runAiCore,
-} from './ai/ai-core';
-
-import {
-  geminiApiManager,
-} from './ai/gemini-api-manager';
-
-import {
-  buildAiContext,
-  normalizeConversationMessages,
-} from './ai/ai-context';
-
-import {
-  getFallbackMessage,
-  logError,
-} from './error-handler';
-
-import {
-  getQuotaSnapshot,
-  formatQuotaSummary,
-} from './line-quota';
-
-import {
-  handleLocationMessage,
-} from './location/location-handler';
-
-import {
-  getLatestLocation,
-} from './location/location-state';
-
-import {
-  handleHomeRouteRequest,
-} from './location/location-route-handler';
-
-import {
-  handleLocationIntent,
-  canExecuteLocationIntent,
-} from './location/location-intent-handler';
-
-import {
-  handleLocationPlacesAction,
-} from './location/location-places-action-handler';
-
-import {
-  buildStyleResponse,
-} from './styles/style-response';
-
-async function generateProactiveReply(type: 'good-night' | 'silence'): Promise<string> {
-  if (type === 'good-night') {
-    return buildStyleResponse('諸位，夜深了，奴才先向各位道一聲晚安。' + '若還有什麼吩咐，隨時喚奴才一聲便是。');
-  }
-
-  const response = await geminiApiManager.execute(async (managerGemini) => managerGemini.models.generateContent({
-    model: 'gemini-3.5-flash-lite',
-    contents: `
-你現在是這個家庭的「大內總管」。
-
-目前家庭群組已經連續一段時間沒有人說話。
-
-你現在要主動打破冷清。
-
-請只說一句自然、簡短、有總管性格的話。
-
-可以像是在宮門口主動探頭看看眾人是否還醒著，
-可以帶一點幽默、關心或宮廷感。
-
-不要提到：
-
-- 系統
-- 排程
-- 冷場
-- 三小時
-- 監控
-- 程式
-- AI
-
-不要說自己需要休息或要下線。
-
-不要假裝有人剛剛叫你。
-
-直接輸出要在家庭群組中說的那一句話。
-    `.trim(),
-    config: { systemInstruction: SYSTEM_INSTRUCTION },
-  }));
-
-  return response.text?.trim() || buildStyleResponse('諸位都如此安靜，奴才倒有些不習慣了。');
-}
-
-
-import {
-  familyMemoryIntegration,
-} from './family-memory-integration';
-
-import {
-  routeFamilyMemoryMessage,
-} from './family-memory-route-boundary';
-
-import {
-  buildFamilyMemoryResponse,
-} from './family-memory-response';
-
+import { handleFunctionHelp } from './function-help';
+import { handleStyleSwitch } from './style-switch';
+import { handleReminderMessage } from './reminder-handler';
+import { loadFamilyGroupId } from './family-group-state';
+import { startProactiveScheduler, recordFamilyGroupMessage } from './proactive-scheduler';
+import { addToMemory, buildConversationPrompt, getConversationKey, getMemory } from './memory';
+import { observeMessage, invalidateObserver, isObserverMuteCommand, isObserverUnmuteCommand, muteObserver, unmuteObserver } from './observer';
+import { runAiCore } from './ai/ai-core';
+import { geminiApiManager } from './ai/gemini-api-manager';
+import { buildAiContext, normalizeConversationMessages } from './ai/ai-context';
+import { getFallbackMessage, logError } from './error-handler';
+import { getQuotaSnapshot, formatQuotaSummary } from './line-quota';
+import { handleLocationMessage } from './location/location-handler';
+import { getLatestLocation } from './location/location-state';
+import { handleHomeRouteRequest } from './location/location-route-handler';
+import { handleLocationIntent, canExecuteLocationIntent } from './location/location-intent-handler';
+import { handleLocationPlacesAction } from './location/location-places-action-handler';
+import { buildStyleResponse } from './styles/style-response';
+import { familyMemoryIntegration } from './family-memory-integration';
+import { routeFamilyMemoryMessage } from './family-memory-route-boundary';
+import { buildFamilyMemoryResponse } from './family-memory-response';
 import { enqueueConversationTask } from './conversation-queue';
 import { claimWebhookEvent } from './webhook-event-dedup';
-
-/**
- * ============================================================
- * 大內總管
- * ============================================================
- */
 
 dotenv.config();
 
@@ -173,143 +38,93 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
 const channelSecret = process.env.LINE_CHANNEL_SECRET || '';
-const geminiApiKey = process.env.GEMINI_API_KEY || '';
-
-const lineClient = new messagingApi.MessagingApiClient({
-  channelAccessToken,
-});
-
-const lineMiddleware = middleware({
-  channelSecret,
-});
-
+const lineClient = new messagingApi.MessagingApiClient({ channelAccessToken });
+const lineMiddleware = middleware({ channelSecret });
 const gemini = geminiApiManager.createClient();
 
-const ALL_TARGET_WORDS = [
-  '本人',
-  '大人',
-  '全家',
-  '全家人',
-];
-
-const FAMILY_TARGET_ACTION_WORDS = [
-  '幫我',
-  '幫他',
-  '幫她',
-  '問他',
-  '問她',
-  '通知他',
-  '通知她',
-  '告訴他',
-  '告訴她',
-  '找他',
-  '找她',
-  '幫',
-  '替',
-  '查',
-  '設定',
-  '提醒',
-  '記得',
-  '記下',
-  '記住',
-  '告知',
-  '詢問',
-  '通知',
-  '安排',
-  '修改',
-  '取消',
-  '刪除',
-];
-
-const FAMILY_GREETING_WORDS = [
-  '早安',
-  '午安',
-  '晚安',
-  '嗨',
-  '哈囉',
-  '你好',
-];
+const ALL_TARGET_WORDS = ['本人', '大人', '全家', '全家人'];
+const FAMILY_TARGET_ACTION_WORDS = ['幫我', '幫他', '幫她', '問他', '問她', '通知他', '通知她', '告訴他', '告訴她', '找他', '找她', '幫', '替', '查', '設定', '提醒', '記得', '記下', '記住', '告知', '詢問', '通知', '安排', '修改', '取消', '刪除'];
+const FAMILY_GREETING_WORDS = ['早安', '午安', '晚安', '嗨', '哈囉', '你好'];
 
 function hasFamilyTargetIntent(message: string): boolean {
   const text = message.trim();
   if (!text) return false;
-
   const hasAllTarget = ALL_TARGET_WORDS.some((word) => text.includes(word));
   const hasGreeting = FAMILY_GREETING_WORDS.some((word) => text.includes(word));
   const hasAction = FAMILY_TARGET_ACTION_WORDS.some((word) => text.includes(word));
-
   if (hasAllTarget && hasGreeting) return true;
   if (hasAllTarget && hasAction) return true;
   if (ALL_TARGET_WORDS.some((word) => text === word)) return true;
-
   const hasKnownFamilyMember = Object.values(FAMILY_MEMBERS).some((member: any) => {
     const identity = typeof member?.identity === 'string' ? member.identity : '';
     const mentionName = typeof member?.mentionName === 'string' ? member.mentionName : '';
     return (identity && text.includes(identity)) || (mentionName && text.includes(mentionName));
   });
-
   return hasKnownFamilyMember && (hasGreeting || hasAction);
 }
 
 function hasReminderInvocation(message: string): boolean {
-  const text = message.trim();
-  if (!text) return false;
-  return text.includes('提醒');
+  return message.trim().includes('提醒');
 }
 
 function getObserverTraceId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-async function sendReminderReply(
-  replyToken: string,
-  replyText: string,
-  mentionUserIds: string[] = [],
-  mentionAll = false,
-): Promise<void> {
+async function sendReminderReply(replyToken: string, replyText: string, mentionUserIds: string[] = [], mentionAll = false): Promise<void> {
   const mentionText = mentionAll ? '@all ' : mentionUserIds.length ? mentionUserIds.map((id) => `@${id}`).join(' ') + ' ' : '';
-  await lineClient.replyMessage({
-    replyToken,
-    messages: [{
-      type: 'text',
-      text: `${mentionText}${replyText}`.slice(0, 5000),
-    }],
-  });
+  await lineClient.replyMessage({ replyToken, messages: [{ type: 'text', text: `${mentionText}${replyText}`.slice(0, 5000) }] });
 }
 
 async function sendAiReply(replyToken: string, replyText: string): Promise<void> {
-  await lineClient.replyMessage({
-    replyToken,
-    messages: [{
-      type: 'text',
-      text: replyText.slice(0, 5000),
-    }],
-  });
+  await lineClient.replyMessage({ replyToken, messages: [{ type: 'text', text: replyText.slice(0, 5000) }] });
 }
 
 async function generateVoteOptions(prompt: string): Promise<string[]> {
-  const response = await geminiApiManager.execute('generateVoteOptions', async (client) => {
-    const result = await client.models.generateContent({
-      model: 'gemini-3.5-flash-lite',
-      contents: prompt,
-      config: {
-        temperature: 0,
-      },
-    });
+  const response = await geminiApiManager.execute(async (client) => {
+    const result = await client.models.generateContent({ model: 'gemini-3.5-flash-lite', contents: prompt, config: { temperature: 0 } });
     return result.text || '';
   });
+  return response.split('\n').map((line) => line.replace(/^[-*\d.、)]+\s*/, '').trim()).filter(Boolean).slice(0, 10);
+}
 
-  return response
-    .split('\n')
-    .map((line) => line.replace(/^[-*\d.、)]+\s*/, '').trim())
-    .filter(Boolean)
-    .slice(0, 10);
+function buildFamilyMemberContexts(): Array<{
+  userId: string;
+  identity: string;
+  role?: string;
+  authority?: string;
+  personality?: string;
+  interaction?: string;
+  mentionName?: string;
+  primaryNames?: string[];
+  aliases?: string[];
+}> {
+  return Object.entries(FAMILY_MEMBERS).map(([userId, member]: [string, any]) => ({
+    userId,
+    identity: member.identity,
+    role: member.role,
+    authority: member.authority,
+    personality: member.personality,
+    interaction: member.interaction,
+    mentionName: member.mentionName,
+    primaryNames: member.primaryNames,
+    aliases: member.aliases,
+  }));
+}
+
+async function generateProactiveReply(type: 'good-night' | 'silence'): Promise<string> {
+  if (type === 'good-night') return buildStyleResponse('諸位，夜深了，奴才先向各位道一聲晚安。若還有什麼吩咐，隨時喚奴才一聲便是。');
+  const response = await geminiApiManager.execute(async (managerGemini) => managerGemini.models.generateContent({
+    model: 'gemini-3.5-flash-lite',
+    contents: '你現在是這個家庭的「大內總管」。目前家庭群組已經連續一段時間沒有人說話。你現在要主動打破冷清。請只說一句自然、簡短、有總管性格的話。不要提到系統、排程、冷場、監控、程式、AI。不要說自己需要休息或要下線。不要假裝有人剛剛叫你。直接輸出要在家庭群組中說的那一句話。',
+    config: { systemInstruction: SYSTEM_INSTRUCTION },
+  }));
+  return response.text?.trim() || buildStyleResponse('諸位都如此安靜，奴才倒有些不習慣了。');
 }
 
 app.post('/webhook', lineMiddleware, async (req, res) => {
   const events = req.body.events;
   res.sendStatus(200);
-
   try {
     await Promise.all(events.map(async (event: any) => {
       if (!claimWebhookEvent(event.webhookEventId)) return;
@@ -318,37 +133,24 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
 
       if (event.type === 'message' && event.message?.type === 'location') {
         if (!event.replyToken || (event.source.type !== 'user' && event.source.type !== 'group')) return;
-
         const locationResult = handleLocationMessage(event);
-        if (!locationResult.handled) {
-          console.warn('[Location] 無法處理 LINE 位置訊息:', locationResult.reason);
-          return;
-        }
-
-        if (event.source.type === 'group' && event.source.groupId) {
-          recordFamilyGroupMessage(event.source.groupId);
-        }
-
-        await lineClient.replyMessage({
-          replyToken: event.replyToken,
-          messages: [{ type: 'text', text: buildStyleResponse('喳，奴才已收到您剛分享的位置。') }],
-        });
+        if (!locationResult.handled) return;
+        if (event.source.type === 'group' && event.source.groupId) recordFamilyGroupMessage(event.source.groupId);
+        await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('喳，奴才已收到您剛分享的位置。') }] });
         return;
       }
 
       if (event.type !== 'message' || event.message.type !== 'text' || !event.replyToken) return;
+      if (event.source.type !== 'user' && event.source.type !== 'group') return;
 
       const userMessage = event.message.text;
       const familyMember = FAMILY_MEMBERS[event.source.userId || ''];
-      if (event.source.type !== 'user' && event.source.type !== 'group') return;
-
-      if (event.source.type === 'group' && event.source.groupId) {
-        recordFamilyGroupMessage(event.source.groupId);
-      }
+      if (event.source.type === 'group' && event.source.groupId) recordFamilyGroupMessage(event.source.groupId);
 
       const conversationKey = getConversationKey(event);
       const routeReceivedAt = Date.now();
       console.log(`[RouteTiming] QUEUE_ENTER key=${conversationKey} elapsed=0ms message=${JSON.stringify(userMessage)}`);
+
       return enqueueConversationTask(conversationKey, async () => {
         console.log(`[RouteTiming] QUEUE_START key=${conversationKey} wait=${Date.now() - routeReceivedAt}ms`);
         const historyBeforeMessage = getMemory(conversationKey);
@@ -357,14 +159,11 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
         const shouldInvokeController = hasTrigger || hasTargetIntent;
         const observerTargetId = event.source.type === 'group' ? event.source.groupId : event.source.userId;
 
-        if (shouldInvokeController && observerTargetId) {
-          invalidateObserver(observerTargetId, eventReceivedAt);
-        }
+        if (shouldInvokeController && observerTargetId) invalidateObserver(observerTargetId, eventReceivedAt);
 
         if (observerTargetId && isObserverMuteCommand(userMessage)) {
-          const mutedUntil = muteObserver(observerTargetId);
-          console.log(`[ObserverRoute][${observerTraceId}] MUTE until=${new Date(mutedUntil).toISOString()}`);
           const reply = buildStyleResponse('喳，遵旨。奴才先安靜。');
+          muteObserver(observerTargetId);
           await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply }] });
           addToMemory(conversationKey, 'user', userMessage);
           addToMemory(conversationKey, 'assistant', reply);
@@ -373,7 +172,6 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
 
         if (observerTargetId && isObserverUnmuteCommand(userMessage)) {
           unmuteObserver(observerTargetId);
-          console.log(`[ObserverRoute][${observerTraceId}] UNMUTE`);
           const reply = buildStyleResponse('喳，奴才恢復值班。');
           await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply }] });
           addToMemory(conversationKey, 'user', userMessage);
@@ -383,38 +181,29 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
 
         if (hasTrigger && /額度|配額/.test(userMessage)) {
           try {
-            const quota = await getQuotaSnapshot(lineClient);
-            const quotaReply = formatQuotaSummary(quota);
+            const quotaReply = formatQuotaSummary(await getQuotaSnapshot(lineClient));
             await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: quotaReply.slice(0, 5000) }] });
             addToMemory(conversationKey, 'user', userMessage);
             addToMemory(conversationKey, 'assistant', quotaReply);
           } catch (error) {
             logError('LINE 額度查詢失敗', error);
-            try {
-              await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('奴才暫時查不到 LINE 額度，請稍後再問。') }] });
-            } catch (fallbackError) {
-              logError('LINE 額度查詢備援回覆失敗', fallbackError);
-            }
+            try { await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('奴才暫時查不到 LINE 額度，請稍後再問。') }] }); } catch (fallbackError) { logError('LINE 額度查詢備援回覆失敗', fallbackError); }
           }
           return;
         }
 
         try {
-          const locationRouteResult = await handleHomeRouteRequest(userMessage, event.source.userId || '');
-          if (locationRouteResult.handled) {
-            const locationRouteReply = locationRouteResult.replyText || (locationRouteResult.success ? buildStyleResponse('喳，奴才已取得回家的路程資訊。') : buildStyleResponse('喳，奴才目前無法取得這道位置資訊。'));
-            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: locationRouteReply.slice(0, 5000) }] });
+          const result = await handleHomeRouteRequest(userMessage, event.source.userId || '');
+          if (result.handled) {
+            const reply = result.replyText || (result.success ? buildStyleResponse('喳，奴才已取得回家的路程資訊。') : buildStyleResponse('喳，奴才目前無法取得這道位置資訊。'));
+            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
             addToMemory(conversationKey, 'user', userMessage);
-            addToMemory(conversationKey, 'assistant', locationRouteReply);
+            addToMemory(conversationKey, 'assistant', reply);
             return;
           }
         } catch (error) {
           logError('Location Route 處理失敗', error);
-          try {
-            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。') }] });
-          } catch (fallbackError) {
-            logError('Location Route 備援回覆失敗', fallbackError);
-          }
+          try { await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。') }] }); } catch (fallbackError) { logError('Location Route 備援回覆失敗', fallbackError); }
           return;
         }
 
@@ -423,7 +212,6 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
           if (locationIntentResult.handled) {
             const canExecute = canExecuteLocationIntent(locationIntentResult);
             let locationReply: string;
-
             if (!canExecute && locationIntentResult.clarificationRequired) {
               locationReply = locationIntentResult.clarificationMessage || buildStyleResponse('總管目前還缺少必要的位置資訊，請先提供目前位置或設定固定位置。');
             } else if (canExecute && locationIntentResult.intent === 'CURRENT_LOCATION' && locationIntentResult.locationResolution?.location) {
@@ -436,22 +224,15 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
                   message: userMessage,
                   userId: event.source.userId || '',
                 });
-
                 if (!placesResult.success) {
-                  if (placesResult.reason === 'current-location-unknown') {
-                    locationReply = buildStyleResponse('喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。');
-                  } else if (placesResult.reason === 'home-location-unknown') {
-                    locationReply = buildStyleResponse('喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。');
-                  } else if (placesResult.reason === 'MISSING_API_KEY') {
-                    locationReply = buildStyleResponse('喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。');
-                  } else {
-                    locationReply = buildStyleResponse('喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。');
-                  }
+                  if (placesResult.reason === 'current-location-unknown') locationReply = buildStyleResponse('喳，奴才目前沒有收到主上的最新位置，還不能替您搜尋附近店家。');
+                  else if (placesResult.reason === 'home-location-unknown') locationReply = buildStyleResponse('喳，奴才目前還沒有記下固定家位置，還不能替您搜尋家附近店家。');
+                  else if (placesResult.reason === 'MISSING_API_KEY') locationReply = buildStyleResponse('喳，位置已經確認，但附近店家搜尋服務目前尚未完成設定。');
+                  else locationReply = buildStyleResponse('喳，奴才已確認搜尋位置，但目前無法取得附近店家資料，請稍後再試。');
                 } else {
                   const places = placesResult.places || [];
-                  if (!places.length) {
-                    locationReply = buildStyleResponse('喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。');
-                  } else {
+                  if (!places.length) locationReply = buildStyleResponse('喳，奴才已依照目前位置搜尋附近店家，但這次沒有找到合適的結果。');
+                  else {
                     const placeLines = places.slice(0, 10).map((place: any, index: number) => {
                       const name = typeof place?.displayName === 'string' ? place.displayName : typeof place?.displayName?.text === 'string' ? place.displayName.text : typeof place?.name === 'string' ? place.name : '未命名店家';
                       const address = typeof place?.formattedAddress === 'string' ? place.formattedAddress : typeof place?.address === 'string' ? place.address : '';
@@ -459,8 +240,8 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
                       const distance = typeof place?.distanceMeters === 'number' ? `｜約 ${Math.round(place.distanceMeters)} 公尺` : '';
                       return `${index + 1}. ${name}${rating}${distance}${address ? `\n   ${address}` : ''}`;
                     });
-                    const searchLabel = locationIntentResult.intent === 'NEAR_HOME' ? '固定家附近' : '目前位置附近';
-                    locationReply = buildStyleResponse(`喳，奴才已依照「${searchLabel}」的實際位置查到以下店家：\n\n`) + placeLines.join('\n\n');
+                    const label = locationIntentResult.intent === 'NEAR_HOME' ? '固定家附近' : '目前位置附近';
+                    locationReply = buildStyleResponse(`喳，奴才已依照「${label}」的實際位置查到以下店家：\n\n`) + placeLines.join('\n\n');
                   }
                 }
               } catch (error) {
@@ -470,7 +251,6 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
             } else {
               locationReply = locationIntentResult.clarificationMessage || buildStyleResponse('喳，奴才已接住這道位置需求，但目前還缺少可以執行的功能。');
             }
-
             await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: locationReply.slice(0, 5000) }] });
             addToMemory(conversationKey, 'user', userMessage);
             addToMemory(conversationKey, 'assistant', locationReply);
@@ -478,11 +258,7 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
           }
         } catch (error) {
           logError('Location Intent 處理失敗', error);
-          try {
-            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。') }] });
-          } catch (fallbackError) {
-            logError('Location Intent 備援回覆失敗', fallbackError);
-          }
+          try { await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道位置資訊，請稍後再試。') }] }); } catch (fallbackError) { logError('Location Intent 備援回覆失敗', fallbackError); }
           return;
         }
 
@@ -513,24 +289,20 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
         }
 
         try {
-          const voteContextId = event.source.type === 'group' ? event.source.groupId : event.source.type === 'user' ? event.source.userId : '';
+          const voteContextId = event.source.type === 'group' ? event.source.groupId : event.source.userId || '';
           if (voteContextId) {
             const voteResult = await handleVoteMessage({ groupId: voteContextId, userId: event.source.userId || '', message: userMessage, generateOptions: generateVoteOptions });
             if (voteResult.handled) {
-              const voteReply = voteResult.message || '投票狀態已更新。';
-              await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: voteReply.slice(0, 5000) }] });
+              const reply = voteResult.message || '投票狀態已更新。';
+              await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: reply.slice(0, 5000) }] });
               addToMemory(conversationKey, 'user', userMessage);
-              addToMemory(conversationKey, 'assistant', voteReply);
+              addToMemory(conversationKey, 'assistant', reply);
               return;
             }
           }
         } catch (error) {
           logError('Vote 處理失敗', error);
-          try {
-            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: '投票功能目前無法處理這則訊息，請稍後再試。' }] });
-          } catch (fallbackError) {
-            logError('Vote 備援回覆失敗', fallbackError);
-          }
+          try { await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: '投票功能目前無法處理這則訊息，請稍後再試。' }] }); } catch (fallbackError) { logError('Vote 備援回覆失敗', fallbackError); }
           return;
         }
 
@@ -541,12 +313,10 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
             const reminderResult = await handleReminderMessage(userMessage, event.source.userId || '', reminderGroupId, gemini, hasReminderInvocation(userMessage));
             console.log(`[RouteTiming] REMINDER_DONE elapsed=${Date.now() - stageStartedAt}ms total=${Date.now() - routeReceivedAt}ms`);
             if (reminderResult.handled) {
-              const reminderReply = reminderResult.message || (reminderResult.created ? buildStyleResponse('已記下，奴才會依旨提醒。') : buildStyleResponse('喳，奴才已處理這道 Reminder。'));
-              const reminderMentionUserIds = event.source.type === 'group' ? reminderResult.mentionUserIds : [];
-              const reminderMentionAll = event.source.type === 'group' && reminderResult.mentionAll === true;
-              await sendReminderReply(event.replyToken, reminderReply, reminderMentionUserIds, reminderMentionAll);
+              const reply = reminderResult.message || (reminderResult.created ? buildStyleResponse('已記下，奴才會依旨提醒。') : buildStyleResponse('喳，奴才已處理這道 Reminder。'));
+              await sendReminderReply(event.replyToken, reply, event.source.type === 'group' ? reminderResult.mentionUserIds : [], event.source.type === 'group' && reminderResult.mentionAll === true);
               addToMemory(conversationKey, 'user', userMessage);
-              addToMemory(conversationKey, 'assistant', reminderReply);
+              addToMemory(conversationKey, 'assistant', reply);
               return;
             }
           }
@@ -557,11 +327,7 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
 
         try {
           const stageStartedAt = Date.now();
-          const familyMemoryRoute = routeFamilyMemoryMessage(userMessage, {
-            existingFunctionMatched: false,
-            actorUserId: event.source.userId || '',
-            integration: familyMemoryIntegration,
-          });
+          const familyMemoryRoute = routeFamilyMemoryMessage(userMessage, { existingFunctionMatched: false, actorUserId: event.source.userId || '', integration: familyMemoryIntegration });
           console.log(`[RouteTiming] MEMORY_DONE elapsed=${Date.now() - stageStartedAt}ms total=${Date.now() - routeReceivedAt}ms type=${familyMemoryRoute.type}`);
           if (familyMemoryRoute.type === 'executed') {
             const reply = buildStyleResponse(buildFamilyMemoryResponse(familyMemoryRoute.result));
@@ -572,50 +338,66 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
           }
         } catch (error) {
           logError('Family Memory 處理失敗', error);
-          try {
-            await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道家庭記憶，請稍後再試。') }] });
-          } catch (fallbackError) {
-            logError('Family Memory 備援回覆失敗', fallbackError);
-          }
+          try { await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: 'text', text: buildStyleResponse('總管暫時無法處理這道家庭記憶，請稍後再試。') }] }); } catch (fallbackError) { logError('Family Memory 備援回覆失敗', fallbackError); }
           return;
         }
 
         if (!shouldInvokeController) {
           observeMessage({
             targetId: observerTargetId || '',
-            userId: event.source.userId || '',
-            message: userMessage,
+            userMessage,
+            replyToken: event.replyToken,
             gemini,
             lineClient,
-            traceId: observerTraceId,
+            diagnosticTraceId: observerTraceId,
             eventReceivedAt,
             replyDeadlineAt: eventReceivedAt + 4500,
+            familyMember,
+            getConversationContext: () => buildConversationPrompt(getMemory(conversationKey), ''),
+            onPassiveReply: (replyText) => addToMemory(conversationKey, 'assistant', replyText),
           });
           return;
         }
 
         const cleanedMessage = cleanCallNames(userMessage);
-        const activeCallNames = getActiveCallNames();
-        const familyTargetResult = await resolveFamilyTarget(cleanedMessage, gemini);
+        await resolveFamilyTarget(cleanedMessage, gemini);
+
+        const latestLocation = event.source.userId ? getLatestLocation(event.source.userId) : undefined;
         const aiContext = buildAiContext({
-          conversationKey,
-          actorUserId: event.source.userId || '',
-          familyMember,
-          familyTargetResult,
-          history: normalizeConversationMessages(historyBeforeMessage),
-          familyMemoryIntegration,
+          conversationType: event.source.type === 'group' ? 'group' : 'private',
+          groupId: event.source.type === 'group' ? event.source.groupId : undefined,
+          speakerUserId: event.source.userId || undefined,
+          speaker: familyMember ? {
+            userId: event.source.userId || '',
+            identity: familyMember.identity,
+            role: familyMember.role,
+            authority: familyMember.authority,
+            personality: familyMember.personality,
+            interaction: familyMember.interaction,
+            mentionName: familyMember.mentionName,
+            primaryNames: familyMember.primaryNames,
+            aliases: familyMember.aliases,
+          } : undefined,
+          familyMembers: buildFamilyMemberContexts(),
+          recentMessages: normalizeConversationMessages(historyBeforeMessage),
+          location: latestLocation ? {
+            userId: latestLocation.userId,
+            name: latestLocation.title,
+            address: latestLocation.address,
+            latitude: latestLocation.latitude,
+            longitude: latestLocation.longitude,
+            sourceType: latestLocation.sourceType,
+            sourceGroupId: latestLocation.sourceGroupId,
+            updatedAt: latestLocation.updatedAt,
+          } : undefined,
+          currentMessage: cleanedMessage,
         });
 
         const aiStartedAt = Date.now();
         console.log(`[RouteTiming] PRE_AI elapsed=${aiStartedAt - routeReceivedAt}ms`);
         try {
-          const reply = await runAiCore({
-            userMessage: cleanedMessage,
-            conversationHistory: buildConversationPrompt(historyBeforeMessage),
-            aiContext,
-            systemInstruction: SYSTEM_INSTRUCTION,
-            geminiApiManager,
-          });
+          const aiResult = await runAiCore({ context: aiContext, geminiApiManager });
+          const reply = aiResult.text;
           console.log(`[RouteTiming] AI_DONE elapsed=${Date.now() - aiStartedAt}ms total=${Date.now() - routeReceivedAt}ms`);
           addToMemory(conversationKey, 'user', userMessage);
           addToMemory(conversationKey, 'assistant', reply);
@@ -626,11 +408,7 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
           const fallback = getFallbackMessage(error);
           addToMemory(conversationKey, 'user', userMessage);
           addToMemory(conversationKey, 'assistant', fallback);
-          try {
-            await sendAiReply(event.replyToken, fallback);
-          } catch (fallbackError) {
-            logError('AI 備援回覆失敗', fallbackError);
-          }
+          try { await sendAiReply(event.replyToken, fallback); } catch (fallbackError) { logError('AI 備援回覆失敗', fallbackError); }
         }
       });
     }));
@@ -639,10 +417,7 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
   }
 });
 
-app.get('/', (_req, res) => {
-  res.status(200).send('大內總管運作中');
-});
-
+app.get('/', (_req, res) => res.status(200).send('大內總管運作中'));
 app.listen(PORT, () => {
   console.log(`大內總管啟動於 ${PORT}`);
   startProactiveScheduler(lineClient, generateProactiveReply);
