@@ -166,8 +166,11 @@ async function sendProactiveMessage(
   lineClient: messagingApi.MessagingApiClient,
   groupId: string,
   text: string,
+  isStillValid?: () => boolean,
 ): Promise<boolean> {
   const quota = await getQuotaSnapshot(lineClient);
+
+  if (isStillValid && !isStillValid()) return false;
 
   if (!canSendPush(quota, 'non-essential')) {
     console.log('[Quota Guard] 阻止非必要主動 Push。', JSON.stringify(quota));
@@ -293,7 +296,12 @@ async function handleSilence(
   /* Gemini 等待期間若有人發言，這次冷場判斷已經失效。 */
   if (state.lastHumanMessageAt !== silenceStartedAt) return;
 
-  const sent = await sendProactiveMessage(lineClient, groupId, reply.trim());
+  const sent = await sendProactiveMessage(
+    lineClient,
+    groupId,
+    reply.trim(),
+    () => state.lastHumanMessageAt === silenceStartedAt,
+  );
   if (!sent) return;
 
   state.silenceRepliesCount += 1;
