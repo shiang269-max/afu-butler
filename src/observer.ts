@@ -103,6 +103,23 @@ export function unmuteObserver(targetId: string): void {
   state.mutedUntil = undefined;
 }
 
+export function invalidateObserver(targetId: string, eventReceivedAt: number): void {
+  const state = getState(targetId);
+
+  state.latestEventReceivedAt = Math.max(
+    state.latestEventReceivedAt || 0,
+    eventReceivedAt,
+  );
+
+  if (state.generalTimer) {
+    clearTimeout(state.generalTimer);
+    state.generalTimer = undefined;
+  }
+
+  state.generalGeneration += 1;
+  state.meaningfulSinceDecision = 0;
+}
+
 function isObserverMuted(state: ObserverState): boolean {
   if (!state.mutedUntil) return false;
 

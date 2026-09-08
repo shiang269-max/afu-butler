@@ -48,6 +48,7 @@ import {
 
 import {
   observeMessage,
+  invalidateObserver,
   isObserverMuteCommand,
   isObserverUnmuteCommand,
   muteObserver,
@@ -335,6 +336,10 @@ app.post('/webhook', lineMiddleware, async (req, res) => {
         const hasTargetIntent = hasFamilyTargetIntent(userMessage);
         const shouldInvokeController = hasTrigger || hasTargetIntent;
         const observerTargetId = event.source.type === 'group' ? event.source.groupId : event.source.userId;
+
+        if (shouldInvokeController && observerTargetId) {
+          invalidateObserver(observerTargetId, eventReceivedAt);
+        }
 
         if (observerTargetId && isObserverMuteCommand(userMessage)) {
           const mutedUntil = muteObserver(observerTargetId);
