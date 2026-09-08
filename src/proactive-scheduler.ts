@@ -77,6 +77,8 @@ const groupStates = new Map<string, GroupState>();
 
 /* 防止 Scheduler tick 重疊，避免同一冷場狀態同時產生多次 Gemini / Push。 */
 let schedulerCheckInFlight = false;
+/* 防止初始化流程重跑時建立第二個永久 setInterval。 */
+let schedulerStarted = false;
 
 function loadSavedFamilyGroup(): void {
   const groupId = loadFamilyGroupId();
@@ -416,6 +418,13 @@ export function startProactiveScheduler(
     type: 'good-night' | 'silence',
   ) => Promise<string>,
 ): void {
+  if (schedulerStarted) {
+    console.log('[Proactive Scheduler] 已啟動，忽略重複初始化。');
+    return;
+  }
+
+  schedulerStarted = true;
+
   const expiredBacklogCount = expireReminderBacklog();
 
   if (expiredBacklogCount > 0) {
