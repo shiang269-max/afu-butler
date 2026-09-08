@@ -1,6 +1,5 @@
 import express from 'express';
 import { middleware, messagingApi } from '@line/bot-sdk';
-import { GoogleGenAI } from '@google/genai';
 import * as dotenv from 'dotenv';
 
 import { SYSTEM_INSTRUCTION } from './persona';
@@ -140,9 +139,7 @@ const lineMiddleware = middleware({
   channelSecret,
 });
 
-const gemini = new GoogleGenAI({
-  apiKey: geminiApiKey,
-});
+const gemini = geminiApiManager.createClient();
 
 const ALL_TARGET_WORDS = [
   '所有人',
