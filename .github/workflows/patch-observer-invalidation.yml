@@ -1,0 +1,53 @@
+name: Patch Observer invalidation
+
+on:
+  push:
+    branches: [reminder-tested-c2]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch observer cancellation boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          observer = Path('src/observer.ts')
+          s = observer.read_text()
+          anchor = "export function unmuteObserver(targetId: string): void {\n  const state = getState(targetId);\n  state.mutedUntil = undefined;\n}\n"
+          insert = anchor + "\nexport function invalidateObserver(targetId: string, eventReceivedAt: number): void {\n  const state = getState(targetId);\n\n  state.latestEventReceivedAt = Math.max(\n    state.latestEventReceivedAt || 0,\n    eventReceivedAt,\n  );\n\n  if (state.generalTimer) {\n    clearTimeout(state.generalTimer);\n    state.generalTimer = undefined;\n  }\n\n  state.generalGeneration += 1;\n  state.meaningfulSinceDecision = 0;\n}\n"
+          if anchor not in s:
+              raise SystemExit('observer unmute anchor not found')
+          s = s.replace(anchor, insert, 1)
+          observer.write_text(s)
+
+          index = Path('src/index.ts')
+          s = index.read_text()
+          old_import = "  observeMessage,\n  isObserverMuteCommand,"
+          new_import = "  observeMessage,\n  invalidateObserver,\n  isObserverMuteCommand,"
+          if old_import not in s:
+              raise SystemExit('index observer import anchor not found')
+          s = s.replace(old_import, new_import, 1)
+
+          old_route = "        const shouldInvokeController = hasTrigger || hasTargetIntent;\n        const observerTargetId = event.source.type === 'group' ? event.source.groupId : event.source.userId;"
+          new_route = "        const shouldInvokeController = hasTrigger || hasTargetIntent;\n        const observerTargetId = event.source.type === 'group' ? event.source.groupId : event.source.userId;\n\n        if (shouldInvokeController && observerTargetId) {\n          invalidateObserver(observerTargetId, eventReceivedAt);\n        }"
+          if old_route not in s:
+              raise SystemExit('index observer route anchor not found')
+          s = s.replace(old_route, new_route, 1)
+          index.write_text(s)
+          PY
+          git diff --check
+          git diff -- src/observer.ts src/index.ts
+          git rm .github/workflows/patch-observer-invalidation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/observer.ts src/index.ts
+          git commit -m "阻止 Observer 與主動回覆競態"
+          git push
