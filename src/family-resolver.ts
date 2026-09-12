@@ -15,31 +15,6 @@ export interface FamilyTarget {
   member: FamilyMember;
 }
 
-function hasFamilyTargetIntent(message: string): boolean {
-  const text = message.trim();
-  if (!text) return false;
-
-  const allTargetWords = ['本人', '大人', '全家', '全家人'];
-  const familyTargetActionWords = ['幫我', '幫他', '幫她', '問他', '問她', '通知他', '通知她', '告訴他', '告訴她', '找他', '找她', '幫', '替', '查', '設定', '提醒', '記得', '記下', '記住', '告知', '詢問', '通知', '安排', '修改', '取消', '刪除'];
-  const familyGreetingWords = ['早安', '午安', '晚安', '嗨', '哈囉', '你好'];
-
-  const hasAllTarget = allTargetWords.some((word) => text.includes(word));
-  const hasGreeting = familyGreetingWords.some((word) => text.includes(word));
-  const hasAction = familyTargetActionWords.some((word) => text.includes(word));
-
-  if (hasAllTarget && hasGreeting) return true;
-  if (hasAllTarget && hasAction) return true;
-  if (allTargetWords.some((word) => text === word)) return true;
-
-  const hasKnownFamilyMember = Object.values(FAMILY_MEMBERS).some((member: any) => {
-    const identity = typeof member?.identity === 'string' ? member.identity : '';
-    const mentionName = typeof member?.mentionName === 'string' ? member.mentionName : '';
-    return (identity && text.includes(identity)) || (mentionName && text.includes(mentionName));
-  });
-
-  return hasKnownFamilyMember && (hasGreeting || hasAction);
-}
-
 /**
  * 根據使用者自然語言，判斷他想找的是哪一位家庭成員。
  *
@@ -64,10 +39,23 @@ export async function resolveFamilyTarget(
     return null;
   }
 
-  // Generic Controller messages do not contain a family-target intent.
-  // Do not spend an extra Gemini request trying to infer a target that
-  // the Controller does not need.
-  if (!hasFamilyTargetIntent(message)) {
+  // 沒有任何家庭成員目標線索時，不必再呼叫 Gemini 做一次全家搜尋。
+  // 這條路徑常見於「阿福，今天怎樣？」「阿福，你睡著了嗎？」等一般 Controller 對話。
+  const familyTargetWords = [
+    '本人', '大人', '全家', '全家人',
+    '幫我', '幫他', '幫她', '問他', '問她', '通知他', '通知她',
+    '告訴他', '告訴她', '找他', '找她', '幫', '替', '查', '設定',
+    '提醒', '記得', '記下', '記住', '告知', '詢問', '通知', '安排',
+    '修改', '取消', '刪除', '早安', '午安', '晚安', '嗨', '哈囉', '你好',
+  ];
+  const hasTargetCue = familyTargetWords.some((word) => message.includes(word));
+  const hasKnownMemberName = Object.values(FAMILY_MEMBERS).some((member) => {
+    const identity = typeof member?.identity === 'string' ? member.identity : '';
+    const mentionName = typeof member?.mentionName === 'string' ? member.mentionName : '';
+    return (identity && message.includes(identity)) || (mentionName && message.includes(mentionName));
+  });
+
+  if (!hasTargetCue && !hasKnownMemberName) {
     return null;
   }
 
